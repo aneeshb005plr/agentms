@@ -1,19 +1,43 @@
-# app/api/v1/router.py
-# Aggregates all v1 routers.
+# app/domains/users/service.py
+# User onboarding — called after every successful JWT validation.
+# First login → create user. Repeat login → update last_seen only.
 
-from fastapi import APIRouter
-from app.api.v1.health import router as health_router
-from app.api.v1.auth import router as auth_router
+import logging
 
-# Phase 1 Week 2 — uncomment when ready
-# from app.api.v1.chat import router as chat_router
+from pymongo.asynchronous.database import AsyncDatabase
 
-# Phase 2 — uncomment when ready
-# from app.api.v1.prompts import router as prompts_router
-# from app.api.v1.users import router as users_router
+from app.domains.auth.schemas import UserClaims
+from app.domains.users.repository import UserRepository
+from app.domains.users.schemas import UserCreate, UserResponse
 
-v1_router = APIRouter(prefix="/api/v1")
+logger = logging.getLogger(__name__)
 
-v1_router.include_router(health_router)
-v1_router.include_router(auth_router)
-# v1_router.include_router(chat_router)
+
+class UserService:
+
+    def __init__(self, db: AsyncDatabase):
+        self._repo = UserRepository(db)
+
+    async def upsert_on_login(self, claims: UserClaims) -> UserResponse:
+        """
+        Auto-onboards user on first login.
+        Updates last_seen on every subsequent login.
+        """
+        existing = await self._repo.find_by_id(claims.user_id)
+
+        if existing:
+            await self._repo.update_last_seen(claims.user_id)
+            return self._repo.to_response(existing)
+
+        doc = await self._repo.create(UserCreate(
+            user_id=claims.user_id,
+            email=claims.email,
+            name=claims.name,
+            roles=claims.roles,
+        ))
+        logger.info("User onboarded: %s (%s)", claims.user_id, claims.email)
+        return self._repo.to_response(doc)
+
+    async def get_user(self, user_id: str) -> UserResponse | None:
+        doc = await self._repo.find_by_id(user_id)
+        return self._repo.to_response(doc) if doc else None

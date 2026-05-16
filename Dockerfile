@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
 
-# Non-root user for security — PwC/AKS requirement
+# Non-root user for security — XYZ/AKS requirement
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 WORKDIR /app

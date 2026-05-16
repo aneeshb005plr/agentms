@@ -130,10 +130,10 @@ class AuthService:
             name=str(payload.get("name", "")),
             given_name=str(payload.get("given_name", "")),
             family_name=str(payload.get("family_name", "")),
-            oid=str(payload.get("oid", "")),
+            oid=str(payload.get("oid", "")),           # Entra ID only — empty for OpenAM
             sid=str(payload.get("sid", "")),
-            tenant_id=str(payload.get("tid", "")),
-            roles=payload.get("roles", []),
+            tenant_id=str(payload.get("tid") or payload.get("realm", "")),  # tid=Entra, realm=OpenAM
+            roles=payload.get("roles", []),             # not in current token — defaults to []
         )
 
     def decode_token_unverified(self, token: str) -> dict:

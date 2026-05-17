@@ -27,6 +27,7 @@
 import operator
 from typing import Annotated
 from langgraph.graph import MessagesState
+from langgraph.managed import RemainingSteps
 
 
 class NextGenAMSState(MessagesState):
@@ -140,3 +141,7 @@ class NextGenAMSState(MessagesState):
 
     # ── Future hooks ──────────────────────────────────────────────────────────
     retrieved_memory: list[str] | None # Layer 3 — always None in Phase 1
+
+    # ── Required by create_react_agent ───────────────────────────────────────
+    # Tracks remaining steps to prevent infinite loops
+    remaining_steps: RemainingSteps

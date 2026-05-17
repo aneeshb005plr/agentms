@@ -1,0 +1,86 @@
+# .env.example
+# Copy to .env for local development. NEVER commit .env to version control.
+# Production secrets go in container volume /var/app/secrets/
+# Filename = variable name, file content = value (no quotes)
+
+# ── Service Identity ──────────────────────────────────────────────────────────
+SERVICE_NAME=nextgenams-agent-engine
+SERVICE_VERSION=1.0.0
+ENVIRONMENT=development
+DEBUG=true
+PORT=8080
+
+# ── GenAI Shared Service ──────────────────────────────────────────────────────
+# TBC from XYZ team
+GENAI_BASE_URL=
+GENAI_API_KEY=
+GENAI_MODEL_SMART=gpt-4o
+GENAI_MODEL_FAST=gpt-4o-mini
+GENAI_TEMPERATURE=0.0
+GENAI_MAX_TOKENS=2000
+
+# ── Vector API ────────────────────────────────────────────────────────────────
+# TBC from XYZ team — URL, auth method, request/response format
+VECTOR_API_URL=
+VECTOR_API_KEY=
+VECTOR_TOP_K=3
+
+# ── ServiceNow ────────────────────────────────────────────────────────────────
+# TBC from XYZ team — manual ticket URL for Phase 1
+SERVICENOW_TICKET_URL=
+
+# ── MongoDB ───────────────────────────────────────────────────────────────────
+# Local dev: mongodb://localhost:27017
+# Production: Atlas connection string via secrets volume
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DB_NAME=nextgenams
+MONGODB_PROMPTS_COLLECTION=prompts
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+# Local dev: redis://localhost:6379
+# Production: Azure Redis Cache via secrets volume
+REDIS_URL=redis://localhost:6379
+REDIS_PROMPT_CHANNEL=nextgenams:prompt_invalidated
+
+# ── Auth — JWT ────────────────────────────────────────────────────────────────
+# Set AUTH_ENABLED=false for local dev (bypasses JWT validation)
+# ALWAYS true in staging and production
+AUTH_ENABLED=false
+AUTH_ALGORITHM=RS256
+
+# JWKS URL — change per environment (IdP does not matter, just set the correct URL)
+#
+# Local dev (OpenAM):
+# AUTH_JWKS_URL=https://{openam-host}/openam/oauth2/keys
+# AUTH_JWKS_URL=https://{openam-host}/am/oauth2/realms/root/keys
+#
+# Staging/Production (Entra ID):
+# AUTH_JWKS_URL=https://login.microsoftonline.com/513294a0-3e20-41b2-a970-6d30bf1546fa/v2.0/keys
+#
+AUTH_JWKS_URL=
+
+# Audience = App client ID (must match aud claim in token exactly)
+# XYZ Entra ID:  ebcf221b-5920-4666-a827-7552acfec417
+# XYZ OpenAM dev: urn:qsdemo:web:dev
+AUTH_AUDIENCE=
+
+# ── JWT Claims — confirmed from XYZ token payload ─────────────────────────────
+# These are resolved in code — kept here for reference only
+# uid          = XYZ internal user ID (PRIMARY)
+# oid          = Entra object ID (fallback)
+# email        = user email
+# name         = display name
+# given_name   = first name
+# family_name  = last name
+# roles        = not in current token (defaults to [])
+
+# ── Conversation ──────────────────────────────────────────────────────────────
+MAX_MESSAGES_IN_CONTEXT=10
+CONVERSATION_HISTORY_LIMIT=50
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Production: set to Angular app URL e.g. https://nextgenams.XYZ.com
+CORS_ORIGINS=["*"]
+
+# ── Feature Flags ─────────────────────────────────────────────────────────────
+ENABLE_SWAGGER=true

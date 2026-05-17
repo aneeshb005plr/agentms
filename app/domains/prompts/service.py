@@ -22,7 +22,6 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import List
 
 import redis.asyncio as redis
 from pymongo import DESCENDING
@@ -207,7 +206,7 @@ class PromptService:
         agent_id:   str,
         prompt_key: str,
         limit:      int = 10,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """Returns version history — newest first. Used by Admin UI (Phase 2)."""
         cursor = self._collection.find(
             {"agent_id": agent_id, "prompt_key": prompt_key},

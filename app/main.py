@@ -14,8 +14,12 @@ from app.api.v1.router import v1_router
 from app.config import settings
 from app.db import db
 from app.domains.auth.service import auth_service
+from app.agents.clients.llm_client import llm_client
+from app.agents.clients.vector_client import vector_client
+from app.agents.clients.health_client import health_client
 from app.domains.prompts.service import PromptService
 from app.domains.users.repository import UserRepository
+from app.domains.conversations.repository import ConversationRepository
 from app.exceptions import register_exception_handlers
 from app.middleware import register_middleware
 
@@ -40,19 +44,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 2. Initialise AuthService (creates PyJWKClient singleton)
     auth_service.initialise()
 
-    # 3. Setup MongoDB indexes
+    # 3. Initialise agent clients
+    llm_client.initialise()
+    vector_client.initialise()
+    health_client.initialise()
+
+    # 4. Setup MongoDB indexes
     await UserRepository(db.mongo_db).setup_indexes()
+    await ConversationRepository(db.mongo_db).setup_indexes()
 
     prompt_service = PromptService(db=db.mongo_db, redis_client=db.redis)
     await prompt_service.setup_indexes()
 
-    # 4. Seed default prompts on first boot
+    # 5. Seed default prompts on first boot
     await prompt_service.seed_default_prompts(seeded_by="system")
 
-    # 5. Load all active prompts into in-memory cache
+    # 6. Load all active prompts into in-memory cache
     await prompt_service.load_all_into_cache()
 
-    # 6. Start Redis pub/sub invalidation listener
+    # 7. Start Redis pub/sub invalidation listener
     task = asyncio.create_task(
         prompt_service.start_invalidation_listener(),
         name="prompt_invalidation_listener",
@@ -76,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pass
 
     _background_tasks.clear()
+    await vector_client.close()
     await db.disconnect()
 
     logger.info("%s shutdown complete", settings.SERVICE_NAME)

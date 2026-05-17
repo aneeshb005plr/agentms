@@ -11,7 +11,6 @@
 
 import logging
 import os
-from typing import List, Optional, Tuple, Type
 
 from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import (
@@ -56,8 +55,8 @@ class Settings(BaseSettings):
 
     # ── GenAI Shared Service (OpenAI compatible) ──────────────────────────────
     # TBC from XYZ team
-    GENAI_BASE_URL:    Optional[str]       = None
-    GENAI_API_KEY:     Optional[SecretStr] = None
+    GENAI_BASE_URL:    str | None       = None
+    GENAI_API_KEY:     SecretStr | None = None
     GENAI_MODEL_SMART: str                 = "gpt-4o"       # complex reasoning
     GENAI_MODEL_FAST:  str                 = "gpt-4o-mini"  # quick tasks
     GENAI_TEMPERATURE: float               = 0.0
@@ -65,13 +64,28 @@ class Settings(BaseSettings):
 
     # ── Vector API (Knowledge Base Search) ───────────────────────────────────
     # TBC from XYZ team — URL, auth, request/response format
-    VECTOR_API_URL: Optional[str]       = None
-    VECTOR_API_KEY: Optional[SecretStr] = None
-    VECTOR_TOP_K:   int                 = 3
+    # Confirmed endpoint:
+    # POST https://webapp-docassist.east.dev.ngc.XYZinternal.com
+    #      /api/vector-retrieval/api/v1/nextgenams_dev/query
+    # Request:  { "question": str, "top_k": int }
+    # Response: { "question", "answer", "chunks": [...], "total_chunks" }
+    # Each chunk has: text, score, source_url, file_name, metadata
+    # metadata includes: application, is_general, rerank_score
+    VECTOR_API_URL: str | None       = None
+    VECTOR_API_KEY: SecretStr | None = None
+    VECTOR_TOP_K:   int                 = 15
+
+    # Quality gate — chunks below this rerank_score are ignored
+    # All chunks below threshold → no relevant info → suggest ticket gently
+    VECTOR_RERANK_SCORE_THRESHOLD:        float = 0.5
+
+    # Minimum chunks from same app to set app_identified
+    # Below this — mixed results → app_identified = None
+    VECTOR_APP_IDENTIFICATION_MIN_CHUNKS: int   = 2
 
     # ── ServiceNow ────────────────────────────────────────────────────────────
     # Phase 1 — manual link only. Full API in Phase 2.
-    SERVICENOW_TICKET_URL: Optional[str] = None
+    SERVICENOW_TICKET_URL: str | None = None
 
     # ── MongoDB ───────────────────────────────────────────────────────────────
     MONGODB_URI:                str = "mongodb://localhost:27017"
@@ -99,12 +113,12 @@ class Settings(BaseSettings):
     #   AUTH_JWKS_URL=https://login.microsoftonline.com/{tenant_id}/v2.0/keys
     #   XYZ Tenant ID: 513294a0-3e20-41b2-a970-6d30bf1546fa
     #
-    AUTH_JWKS_URL:  Optional[str] = None
+    AUTH_JWKS_URL:  str | None = None
 
     # Audience = App client ID (must match aud claim in token exactly)
     # XYZ Entra ID:   ebcf221b-5920-4666-a827-7552acfec417
     # XYZ OpenAM dev: urn:qsdemo:web:dev
-    AUTH_AUDIENCE:  Optional[str] = None
+    AUTH_AUDIENCE:  str | None = None
 
     # ── JWT Claim Mapping — confirmed XYZ Entra ID v2.0 token ─────────────────
     # Same claims confirmed for both Entra ID and OpenAM:
@@ -127,7 +141,7 @@ class Settings(BaseSettings):
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Production: set to Angular app URL e.g. https://nextgenams.XYZ.com
-    CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["*"])
+    CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"])
 
     # ── Feature Flags ─────────────────────────────────────────────────────────
     ENABLE_SWAGGER: bool = True   # disabled automatically in production
@@ -137,12 +151,12 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls: Type[BaseSettings],
+        settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
-    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
             file_secret_settings,   # secrets volume — highest priority

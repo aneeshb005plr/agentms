@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 @tool
 async def check_app_health(app_name: str) -> str:
     """
-    Check the current health status of a PwC application.
+    Check the current health status of a XYZ application.
 
     Use this tool when:
     - The user is reporting an issue with a specific application
@@ -39,7 +39,7 @@ async def check_app_health(app_name: str) -> str:
     already aware and investigating — skip detailed troubleshooting in that case.
 
     Args:
-        app_name: Name of the PwC application to check.
+        app_name: Name of the XYZ application to check.
                   Use the exact application name as identified from the
                   knowledge base search results.
                   Examples: "SAP", "Workday", "ServiceNow", "Astro"

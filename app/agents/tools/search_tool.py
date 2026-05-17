@@ -42,9 +42,9 @@ def _format_chunk(chunk: VectorChunk, index: int) -> str:
 @tool
 async def search_knowledge_base(query: str) -> str:
     """
-    Search the PwC IT support knowledge base for information related to the query.
+    Search the XYZ IT support knowledge base for information related to the query.
 
-    Use this tool when the user asks an IT support question about any PwC application
+    Use this tool when the user asks an IT support question about any XYZ application
     or system. The knowledge base contains troubleshooting guides, how-to articles,
     and IT support documentation.
 
@@ -54,7 +54,7 @@ async def search_knowledge_base(query: str) -> str:
 
     Do NOT call this tool for:
     - Greetings or casual conversation
-    - General knowledge questions unrelated to PwC IT support
+    - General knowledge questions unrelated to XYZ IT support
     - Questions where you already have sufficient context from previous tool calls
 
     Args:
@@ -62,7 +62,7 @@ async def search_knowledge_base(query: str) -> str:
                context from conversation history if this is a follow-up question.
                Examples:
                  "SAP login authentication failure"
-                 "Workday timesheet submission error"
+                 "Astro timesheet submission error"
                  "how to reset password in ServiceNow portal"
 
     Returns:

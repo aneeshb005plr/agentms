@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 async def build_conversational_support_agent(
     prompt_service: PromptService,
+    checkpointer=None,
 ):
     """
     Builds and returns the compiled conversational_support_agent.
@@ -57,11 +58,12 @@ async def build_conversational_support_agent(
     Steps:
     1. Load system prompt from MongoDB via PromptService (falls back to defaults.py)
     2. Build middleware stack
-    3. Create agent via create_agent with smart LLM + tools + middleware
-    4. Return compiled agent graph
+    3. Create agent via create_agent — checkpointer passed directly here
+       create_agent returns an ALREADY COMPILED graph — no .compile() needed
 
     Args:
         prompt_service: PromptService instance for loading system prompt from MongoDB
+        checkpointer:   MongoDBSaver instance for persistent conversation memory
 
     Returns:
         Compiled LangGraph agent — ready for astream_events()
@@ -92,11 +94,12 @@ async def build_conversational_support_agent(
     agent = create_agent(
         model=llm_client.smart,      # smart LLM — gpt-4o for reasoning
         tools=AGENT_TOOLS,           # search, ticket, health check
-        prompt=system_prompt,        # loaded from MongoDB
+        system_prompt=system_prompt, # loaded from MongoDB
         middleware=middleware,        # trimmer + token tracker
+        checkpointer=checkpointer,   # MongoDBSaver — persistent memory per thread_id
     )
 
-    logger.info("conversational_support_agent built successfully")
+    logger.info("conversational_support_agent built successfully — compiled graph returned")
     return agent
 
 

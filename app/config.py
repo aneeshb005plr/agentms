@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # Each chunk has: text, score, source_url, file_name, metadata
     # metadata includes: application, is_general, rerank_score
     VECTOR_API_URL: str | None       = None
-    VECTOR_API_KEY: SecretStr | None = None
+    VECTOR_API_KEY: SecretStr | None = None  # Optional — Vector API may not require auth
     VECTOR_TOP_K:   int                 = 15
 
     # Quality gate — chunks below this rerank_score are ignored
@@ -191,7 +191,6 @@ class Settings(BaseSettings):
             "GENAI_BASE_URL": bool(self.GENAI_BASE_URL),
             "GENAI_API_KEY":  self.GENAI_API_KEY is not None,
             "VECTOR_API_URL": bool(self.VECTOR_API_URL),
-            "VECTOR_API_KEY": self.VECTOR_API_KEY is not None,
             "AUTH_JWKS_URL":  bool(self.AUTH_JWKS_URL),
             "AUTH_AUDIENCE":  bool(self.AUTH_AUDIENCE),
         }
@@ -217,7 +216,7 @@ class Settings(BaseSettings):
         data = self.model_dump(mode="json")
 
         # Mask SecretStr fields
-        for key in ("GENAI_API_KEY", "VECTOR_API_KEY"):
+        for key in ("GENAI_API_KEY",):
             if data.get(key) is not None:
                 data[key] = "***"
 

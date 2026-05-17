@@ -280,14 +280,11 @@ async def chat(
                     "ticket_url": ticket_url,
                 })
 
-                # Auto-generate title on first message
-                sessions = await conversation.get_user_sessions(user.user_id)
-                current  = next(
-                    (s for s in sessions if s.conversation_id == session_id), None
+                # Auto-generate title from first user message
+                await conversation.generate_title_if_needed(
+                    conversation_id=session_id,
+                    first_user_message=user_message,
                 )
-                if current and current.message_count <= 2 and current.title == "New Conversation":
-                    auto_title = user_message[:50] + ("..." if len(user_message) > 50 else "")
-                    await conversation.update_title(session_id, auto_title)
 
         finally:
             heartbeat_task.cancel()
@@ -416,6 +413,12 @@ async def chat_sync(
             user_id=user.user_id,
             llm_calls=llm_calls,
         )
+
+    # Auto-generate title from first user message
+    await conversation.generate_title_if_needed(
+        conversation_id=session_id,
+        first_user_message=user_message,
+    )
 
     return {
         "message_id": saved.message_id,

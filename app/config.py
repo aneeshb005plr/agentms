@@ -146,6 +146,11 @@ class Settings(BaseSettings):
     # ── Feature Flags ─────────────────────────────────────────────────────────
     ENABLE_SWAGGER: bool = True   # disabled automatically in production
 
+    # ── HTTP Client ───────────────────────────────────────────────────────────
+    # Vector API is an internal XYZ endpoint — SSL cert not required
+    # Default False — no cert verification needed in any environment
+    VECTOR_API_VERIFY_SSL: bool = False
+
     # ── Source precedence ─────────────────────────────────────────────────────
     # secrets volume → env vars → .env file → defaults
     @classmethod
@@ -204,6 +209,8 @@ class Settings(BaseSettings):
 
         if not self.AUTH_ENABLED:
             raise ValueError("AUTH_ENABLED must be True in production")
+
+
 
         return self
 

@@ -111,6 +111,7 @@ class VectorClient:
 
         self._client = httpx.AsyncClient(
             headers=headers,
+            verify=settings.VECTOR_API_VERIFY_SSL,  # False for internal XYZ network
             timeout=httpx.Timeout(
                 connect=5.0,
                 read=30.0,    # vector search + answer generation can be slow
@@ -123,7 +124,9 @@ class VectorClient:
             ),
         )
         self._initialised = True
-        logger.info("VectorClient initialised — url=%s", settings.VECTOR_API_URL)
+        logger.info("VectorClient initialised — url=%s ssl_verify=%s",
+                    settings.VECTOR_API_URL, settings.VECTOR_API_VERIFY_SSL)
+
 
     async def close(self) -> None:
         """Called at FastAPI shutdown to close httpx client cleanly."""

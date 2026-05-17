@@ -214,6 +214,35 @@ class ConversationService:
 
     # ── Summary trigger ───────────────────────────────────────────────────────
 
+    async def generate_title_if_needed(
+        self,
+        conversation_id: str,
+        first_user_message: str,
+    ) -> None:
+        """
+        Auto-generates conversation title from first user message.
+        Called after saving assistant message — only updates if still "New Conversation".
+        Uses first 60 chars of user message as title.
+        """
+        doc = await self._repo.get_conversation(conversation_id)
+        if not doc:
+            return
+
+        # Only update if title is still default
+        if doc.get("title", "") != "New Conversation":
+            return
+
+        # Use first 60 chars of user message
+        title = first_user_message.strip()
+        if len(title) > 60:
+            title = title[:60] + "..."
+
+        await self._repo.update_conversation(
+            conversation_id,
+            ConversationUpdate(title=title),
+        )
+        logger.info("Auto-title generated for %s: %s", conversation_id, title)
+
     async def should_generate_summary(self, conversation_id: str) -> bool:
         """
         Returns True when message count hits SUMMARY_TRIGGER_COUNT threshold.

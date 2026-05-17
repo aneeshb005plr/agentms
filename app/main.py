@@ -14,6 +14,7 @@ from app.api.v1.router import v1_router
 from app.config import settings
 from app.db import db
 from app.domains.auth.service import auth_service
+from app.agents.graph.master_graph import master_graph
 from app.agents.clients.llm_client import llm_client
 from app.agents.clients.vector_client import vector_client
 from app.agents.clients.health_client import health_client
@@ -69,6 +70,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     _background_tasks.append(task)
 
+    # 8. Build and compile master graph (agent + checkpointer)
+    await master_graph.build(prompt_service=prompt_service)
+
     logger.info("%s startup complete", settings.SERVICE_NAME)
 
     # ── Running ───────────────────────────────────────────────────────────────
@@ -86,6 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pass
 
     _background_tasks.clear()
+    master_graph.close()
     await vector_client.close()
     await db.disconnect()
 

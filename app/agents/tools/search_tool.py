@@ -24,16 +24,20 @@ logger = logging.getLogger(__name__)
 
 
 def _format_chunk(chunk: VectorChunk, index: int) -> str:
-    """Formats a single chunk as a supporting source reference."""
+    """
+    Formats a single chunk as a supporting source reference.
+    Only includes source_url if it is a valid URL (starts with http).
+    URLs come from chunks.source_url — NOT from the answer field.
+    """
     lines = [f"[Source {index + 1}]"]
     if chunk.file_name:
         lines.append(f"File: {chunk.file_name}")
     if chunk.application:
         lines.append(f"Application: {chunk.application}")
-    if chunk.source_url:
+    # Only include URL if valid
+    if chunk.source_url and chunk.source_url.startswith("http"):
         lines.append(f"URL: {chunk.source_url}")
     lines.append(f"Relevance: {chunk.rerank_score:.2f}")
-    # Include a brief excerpt for context
     excerpt = chunk.text[:200] + "..." if len(chunk.text) > 200 else chunk.text
     lines.append(f"Excerpt: {excerpt}")
     return "\n".join(lines)
@@ -62,7 +66,7 @@ async def search_knowledge_base(query: str) -> str:
                context from conversation history if this is a follow-up question.
                Examples:
                  "SAP login authentication failure"
-                 "Astro timesheet submission error"
+                 "Workday timesheet submission error"
                  "how to reset password in ServiceNow portal"
 
     Returns:

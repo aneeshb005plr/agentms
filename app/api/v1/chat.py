@@ -69,6 +69,11 @@ class StopRequest(BaseModel):
     session_id: str
 
 
+class ChatSyncRequest(BaseModel):
+    session_id: str
+    message:    str
+
+
 class TitleUpdate(BaseModel):
     title: str
 
@@ -299,6 +304,125 @@ async def chat(
             "Connection":       "keep-alive",
         },
     )
+
+
+# ── Non-streaming endpoint ───────────────────────────────────────────────────
+
+@router.post("/sync")
+async def chat_sync(
+    request:      ChatSyncRequest,
+    user:         CurrentUser,
+    conversation: ConversationSvc,
+) -> dict:
+    """
+    Non-streaming chat endpoint.
+    Waits for full agent response and returns it at once.
+    Use this for:
+      - Testing without SSE client
+      - Simple integrations that don't need streaming
+      - Postman / curl testing
+
+    Returns:
+        {
+            "message_id":  str,
+            "content":     str,
+            "ticket_url":  str | None,
+            "session_id":  str
+        }
+    """
+    session_id   = request.session_id
+    user_message = request.message.strip()
+
+    # Save user message
+    await conversation.save_user_message(
+        conversation_id=session_id,
+        user_id=user.user_id,
+        content=user_message,
+    )
+
+    config = {"configurable": {"thread_id": session_id}}
+
+    initial_input = {
+        "messages":                  [HumanMessage(content=user_message)],
+        "session_id":                session_id,
+        "user_id":                   user.user_id,
+        "current_message_llm_calls": [],
+        "requires_ticket":           False,
+        "search_results":            None,
+        "user_intent":               None,
+        "search_queries":            None,
+        "app_identified":            None,
+        "health_data":               None,
+        "conversation_summary":      None,
+        "retrieved_memory":          None,
+    }
+
+    full_response: list[str] = []
+    ticket_url:   str | None = None
+    llm_calls:    list[dict] = []
+
+    # Run agent — collect full response
+    async for event in master_graph.graph.astream_events(
+        input=initial_input,
+        config=config,
+        version="v2",
+    ):
+        event_name = event.get("event", "")
+        metadata   = event.get("metadata", {})
+        node_name  = metadata.get("langgraph_node", "")
+
+        # Collect tokens
+        if event_name == "on_chat_model_stream":
+            chunk = event.get("data", {}).get("chunk")
+            if chunk and hasattr(chunk, "content") and chunk.content:
+                full_response.append(chunk.content)
+
+        # Extract ticket URL
+        elif event_name == "on_tool_end":
+            tool_name   = event.get("name", "")
+            tool_output = str(event.get("data", {}).get("output", ""))
+            if tool_name == "get_servicenow_link" and "SERVICENOW_LINK:" in tool_output:
+                ticket_url = tool_output.split("SERVICENOW_LINK:")[-1].strip().split("\n")[0]
+
+        # Collect token usage
+        elif event_name == "on_chat_model_end":
+            output = event.get("data", {}).get("output")
+            if output and hasattr(output, "usage_metadata") and output.usage_metadata:
+                response_meta = getattr(output, "response_metadata", {})
+                model = response_meta.get("model_name", "unknown")
+                llm_calls.append({
+                    "agent":         "conversational_support_agent",
+                    "node":          node_name or "agent_loop",
+                    "model":         model,
+                    "input_tokens":  output.usage_metadata.get("input_tokens", 0),
+                    "output_tokens": output.usage_metadata.get("output_tokens", 0),
+                    "total_tokens":  output.usage_metadata.get("total_tokens", 0),
+                })
+
+    # Save assistant message
+    final_content = "".join(full_response)
+    saved = await conversation.save_assistant_message(
+        conversation_id=session_id,
+        user_id=user.user_id,
+        content=final_content,
+        ticket_url=ticket_url,
+    )
+
+    # Save token usage
+    if llm_calls:
+        await conversation.record_llm_calls(
+            conversation_id=session_id,
+            message_id=saved.message_id,
+            user_id=user.user_id,
+            llm_calls=llm_calls,
+        )
+
+    return {
+        "message_id": saved.message_id,
+        "content":    final_content,
+        "ticket_url": ticket_url,
+        "session_id": session_id,
+    }
 
 
 # ── Stop endpoint ─────────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.config import settings
 from app.domains.conversations.repository import ConversationRepository
+from app.domains.prompts.cache import prompt_cache
 from app.domains.conversations.schemas import (
     ConversationCreate,
     ConversationResponse,
@@ -220,9 +221,10 @@ class ConversationService:
         first_user_message: str,
     ) -> None:
         """
-        Auto-generates conversation title from first user message.
-        Called after saving assistant message — only updates if still "New Conversation".
-        Uses first 60 chars of user message as title.
+        Auto-generates conversation title using fast LLM (gpt-4o-mini).
+        Called after saving first assistant message.
+        Only updates if title is still "New Conversation".
+        Falls back to first 60 chars if LLM call fails.
         """
         doc = await self._repo.get_conversation(conversation_id)
         if not doc:
@@ -232,16 +234,63 @@ class ConversationService:
         if doc.get("title", "") != "New Conversation":
             return
 
-        # Use first 60 chars of user message
-        title = first_user_message.strip()
-        if len(title) > 60:
-            title = title[:60] + "..."
+        # Try LLM title generation first
+        title = await self._generate_title_with_llm(first_user_message)
 
         await self._repo.update_conversation(
             conversation_id,
             ConversationUpdate(title=title),
         )
         logger.info("Auto-title generated for %s: %s", conversation_id, title)
+
+    async def _generate_title_with_llm(self, user_message: str) -> str:
+        """
+        Uses fast LLM (gpt-4o-mini) to generate a short conversation title.
+        Falls back to first 60 chars if LLM fails.
+        """
+        try:
+            from app.agents.clients.llm_client import llm_client
+            from app.domains.prompts.service import PromptService
+            from app.domains.prompts.cache import PromptCache
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            # Load title prompt from cache (already loaded at startup)
+            prompt_content = prompt_cache.get(
+                PromptCache.TITLE_GENERATION,
+                PromptCache.TITLE_PROMPT,
+            )
+
+            if not prompt_content:
+                raise ValueError("Title prompt not in cache")
+
+            # Format prompt with user message
+            formatted = prompt_content.replace("{message}", user_message[:500])
+
+            # Call fast LLM — gpt-4o-mini — quick and cheap
+            response = await llm_client.fast.ainvoke([
+                HumanMessage(content=formatted)
+            ])
+
+            title = response.content.strip()
+
+            # Sanitise — remove quotes, limit length
+            title = title.strip('"'').strip()
+            if len(title) > 60:
+                title = title[:60] + "..."
+            if not title:
+                raise ValueError("Empty title from LLM")
+
+            return title
+
+        except Exception as e:
+            logger.warning(
+                "LLM title generation failed: %s — using fallback", str(e)
+            )
+            # Fallback — first 60 chars of user message
+            fallback = user_message.strip()
+            if len(fallback) > 60:
+                fallback = fallback[:60] + "..."
+            return fallback
 
     async def should_generate_summary(self, conversation_id: str) -> bool:
         """

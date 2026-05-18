@@ -13,7 +13,7 @@ from app.exceptions import ForbiddenError
 
 logger = logging.getLogger(__name__)
 router   = APIRouter(prefix="/auth", tags=["Auth"])
-_security = HTTPBearer()
+_security = HTTPBearer(auto_error=settings.AUTH_ENABLED)
 
 
 @router.get("/me", response_model=UserClaims)

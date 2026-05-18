@@ -75,7 +75,8 @@ class AuthService:
         if not self._initialised:
             raise RuntimeError("AuthService not initialised.")
 
-        # Dev mode — return mock user matching XYZ token structure
+        # Dev mode — return mock user (AUTH_ENABLED=False)
+        # Token can be empty string or any value — not validated
         if not settings.AUTH_ENABLED:
             return UserClaims(
                 user_id="devuser001",
@@ -85,7 +86,7 @@ class AuthService:
                 family_name="User",
                 oid="00000000-0000-0000-0000-000000000001",
                 sid="00000000-0000-0000-0000-000000000002",
-                tenant_id=settings.AUTH_TENANT_ID or "dev-tenant",
+                tenant_id="dev-tenant",
                 roles=[],
             )
 

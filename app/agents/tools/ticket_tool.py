@@ -1,21 +1,12 @@
 # app/agents/tools/ticket_tool.py
-# ServiceNow ticket tool — returns ticket URL for user to raise a request.
+# ServiceNow ticket tool — returns ticket URL.
 #
-# Phase 1: returns configured SERVICENOW_TICKET_URL — manual link only.
-# Phase 2: will create actual ServiceNow ticket via API and return ticket number.
-#
-# IMPORTANT — agent calling rules (enforced via docstring):
-# - Do NOT call on first response — always try knowledge base first
-# - Call ONLY when:
-#     1. User has tried troubleshooting steps and issue still not resolved
-#     2. User explicitly asks to raise a ticket
-#     3. No information found AND issue seems genuine/urgent
-# - Never call just because no search results were found — suggest gently instead
+# Returns ONLY the URL after SERVICENOW_LINK: prefix.
+# The instruction text is kept minimal so the LLM includes the link naturally.
+# Backend chat.py extracts the URL using regex — robust against any extra text.
 
 import logging
-
 from langchain_core.tools import tool
-
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -34,12 +25,10 @@ async def get_servicenow_link() -> str:
     Do NOT use this tool:
     - On the first response before trying the knowledge base
     - Just because no search results were found (suggest it gently in text instead)
-    - For greetings or out-of-scope questions
     - Multiple times in the same conversation turn
 
-    When you use this tool, include the link naturally in your response with a
-    brief explanation of why they should raise a ticket and what information
-    to include in the ticket description.
+    When you use this tool, include the link naturally in your response.
+    Tell the user what information to include when raising the ticket.
 
     Returns:
         ServiceNow ticket URL for the user to raise an IT support request.
@@ -53,9 +42,6 @@ async def get_servicenow_link() -> str:
             "Please inform the user to contact IT support directly."
         )
 
-    return (
-        f"SERVICENOW_LINK: {settings.SERVICENOW_TICKET_URL}\n"
-        "Include this link in your response with a clear call-to-action. "
-        "Suggest the user describe their issue, steps already tried, "
-        "and any error messages they saw."
-    )
+    # Return clean URL with minimal instruction text
+    # Backend extracts URL using regex so format is flexible
+    return f"SERVICENOW_LINK: {settings.SERVICENOW_TICKET_URL}"

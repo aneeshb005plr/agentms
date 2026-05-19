@@ -270,10 +270,19 @@ async def chat(
                         tool_name   = event.get("name", "")
                         tool_output = str(event.get("data", {}).get("output", ""))
 
-                        # Extract ServiceNow URL if present
+                        # Extract ServiceNow URL — get clean URL only
                         nonlocal ticket_url
                         if tool_name == "get_servicenow_link" and "SERVICENOW_LINK:" in tool_output:
-                            ticket_url = tool_output.split("SERVICENOW_LINK:")[-1].strip().split("\n")[0]
+                            # Split on SERVICENOW_LINK: then take first line
+                            # Strip any trailing punctuation or whitespace
+                            raw_url = tool_output.split("SERVICENOW_LINK:")[-1].strip()
+                            # Take only the URL part — stop at first whitespace or newline
+                            import re
+                            url_match = re.search(r'https?://[^\s
+
+'"\\]+', raw_url)
+                            if url_match:
+                                ticket_url = url_match.group(0).rstrip(".,;:'")")
 
                         found = "NO_RESULTS_FOUND" not in tool_output
                         await event_queue.put(
@@ -485,7 +494,10 @@ async def chat_sync(
             tool_name   = event.get("name", "")
             tool_output = str(event.get("data", {}).get("output", ""))
             if tool_name == "get_servicenow_link" and "SERVICENOW_LINK:" in tool_output:
-                ticket_url = tool_output.split("SERVICENOW_LINK:")[-1].strip().split("\n")[0]
+                raw_url  = tool_output.split("SERVICENOW_LINK:")[-1].strip()
+                url_match = re.search(r'https?://[^\s\n\\"']+', raw_url)
+                if url_match:
+                    ticket_url = url_match.group(0).rstrip(".,;:'\")")
 
         # Collect token usage
         elif event_name == "on_chat_model_end":

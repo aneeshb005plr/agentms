@@ -192,11 +192,12 @@ async def chat(
     async def event_generator() -> AsyncGenerator[str, None]:
         session_id    = request.session_id
         user_message  = request.message.strip()
-        message_id    = None
-        full_response: list[str] = []
-        ticket_url:   str | None = None
-        llm_calls:    list[dict] = []
-        event_queue:  asyncio.Queue = asyncio.Queue()
+        message_id        = None
+        full_response:    list[str]  = []
+        ticket_url:       str | None = None
+        llm_calls:        list[dict] = []
+        collected_sources: list[dict] = []   # sources from vector search tool
+        event_queue:      asyncio.Queue = asyncio.Queue()
 
         # ── Repair checkpoint if previous stream was cancelled mid-tool-call ──
         # Prevents HTTP 400 "tool_calls must be followed by tool messages"
@@ -372,6 +373,7 @@ async def chat(
                     ticket_url=ticket_url,
                 )
                 message_id = saved.message_id
+                # Emit real message_id so frontend can use it for reactions
 
                 # Save token usage
                 if llm_calls:

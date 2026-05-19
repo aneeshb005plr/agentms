@@ -215,14 +215,18 @@ async def chat(
 
             except asyncio.CancelledError:
                 logger.info("Agent stream cancelled for session: %s", session_id)
-                await event_queue.put("CANCELLED")
+                # Do not put to queue — generator itself may be cancelled
+                # Just let the finally block clean up
 
             except Exception as e:
                 logger.error("Agent error session=%s: %s", session_id, str(e))
-                await event_queue.put(
-                    _fmt("error", {"message": "An error occurred. Please try again."})
-                )
-                await event_queue.put(None)
+                try:
+                    await event_queue.put(
+                        _fmt("error", {"message": "An error occurred. Please try again."})
+                    )
+                    await event_queue.put(None)
+                except Exception:
+                    pass  # Queue may be closed if generator was cancelled
 
         # ── Heartbeat task ────────────────────────────────────────────────────
         async def heartbeat() -> None:
@@ -238,16 +242,30 @@ async def chat(
         try:
             # ── Yield SSE events ──────────────────────────────────────────────
             while True:
-                item = await event_queue.get()
+                try:
+                    item = await event_queue.get()
+                except asyncio.CancelledError:
+                    # Client disconnected — stop cleanly
+                    logger.info("Client disconnected for session: %s", session_id)
+                    break
 
                 if item is None:
                     break
 
                 if item == "CANCELLED":
-                    yield _fmt("error", {"message": "Response stopped."})
+                    # User clicked stop — send stopped message
+                    try:
+                        yield _fmt("error", {"message": "Response stopped."})
+                    except Exception:
+                        pass
                     break
 
-                yield item   # already formatted SSE string
+                try:
+                    yield item
+                except Exception:
+                    # Client disconnected mid-stream
+                    logger.info("Client disconnected mid-stream: %s", session_id)
+                    break
 
             # ── Post-stream: save message + token usage ───────────────────────
             final_content = "".join(full_response)

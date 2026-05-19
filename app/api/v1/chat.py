@@ -37,7 +37,7 @@ from datetime import datetime
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from pydantic import BaseModel
 
 from app.agents.graph.master_graph import master_graph
@@ -48,6 +48,87 @@ from app.exceptions import NotFoundError
 
 logger = logging.getLogger(__name__)
 router  = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+async def _repair_checkpoint_after_cancel(session_id: str) -> None:
+    """
+    Repairs LangGraph checkpoint after a cancelled stream.
+
+    Problem:
+        When stream is cancelled mid-tool-call, the checkpoint contains:
+            AIMessage(tool_calls=[...])   ← tool call started
+            # ToolMessage MISSING         ← stream cancelled before result
+
+        Next LLM call fails with HTTP 400:
+        "tool_calls must be followed by tool messages"
+
+    Fix:
+        Load the checkpoint messages and remove any AIMessage that has
+        tool_calls but is not followed by the corresponding ToolMessages.
+        This gives the next conversation a clean slate.
+    """
+    try:
+        from app.agents.graph.master_graph import master_graph
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        config = {"configurable": {"thread_id": session_id}}
+
+        # Get current checkpoint state
+        state = await master_graph.graph.aget_state(config)
+        if not state or not state.values:
+            return
+
+        messages = state.values.get("messages", [])
+        if not messages:
+            return
+
+        # Find dangling tool calls — AIMessage with tool_calls not followed by ToolMessages
+        cleaned = list(messages)
+        i = len(cleaned) - 1
+
+        while i >= 0:
+            msg = cleaned[i]
+
+            # Check if this is an AIMessage with tool_calls
+            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                tool_call_ids = {tc["id"] for tc in msg.tool_calls}
+
+                # Check if all tool_calls have corresponding ToolMessages after this index
+                tool_response_ids = {
+                    m.tool_call_id
+                    for m in cleaned[i + 1:]
+                    if isinstance(m, ToolMessage) and hasattr(m, "tool_call_id")
+                }
+
+                # If any tool_call_id is missing a response — remove this AIMessage
+                # and any partial ToolMessages after it
+                if not tool_call_ids.issubset(tool_response_ids):
+                    logger.warning(
+                        "Repairing checkpoint for session %s — "
+                        "removing dangling AIMessage with tool_calls at index %d",
+                        session_id, i
+                    )
+                    # Remove from this AIMessage onwards
+                    cleaned = cleaned[:i]
+                    break
+
+            i -= 1
+
+        if len(cleaned) != len(messages):
+            # Update checkpoint with cleaned messages
+            await master_graph.graph.aupdate_state(
+                config,
+                {"messages": cleaned},
+            )
+            logger.info(
+                "Checkpoint repaired for session %s — "
+                "removed %d dangling messages",
+                session_id, len(messages) - len(cleaned)
+            )
+
+    except Exception as e:
+        # Never let checkpoint repair crash the next request
+        logger.warning("Checkpoint repair failed for session %s: %s", session_id, str(e))
 
 # ── Running tasks registry ────────────────────────────────────────────────────
 # session_id → asyncio.Task
@@ -115,6 +196,10 @@ async def chat(
         ticket_url:   str | None = None
         llm_calls:    list[dict] = []
         event_queue:  asyncio.Queue = asyncio.Queue()
+
+        # ── Repair checkpoint if previous stream was cancelled mid-tool-call ──
+        # Prevents HTTP 400 "tool_calls must be followed by tool messages"
+        await _repair_checkpoint_after_cancel(session_id)
 
         # ── Save user message ─────────────────────────────────────────────────
         await conversation.save_user_message(
@@ -347,6 +432,9 @@ async def chat_sync(
     """
     session_id   = request.session_id
     user_message = request.message.strip()
+
+    # Repair checkpoint before running agent
+    await _repair_checkpoint_after_cancel(session_id)
 
     # Save user message
     await conversation.save_user_message(

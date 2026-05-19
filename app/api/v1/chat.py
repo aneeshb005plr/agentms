@@ -32,6 +32,7 @@
 import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncGenerator
 from datetime import datetime
 
@@ -277,7 +278,6 @@ async def chat(
                             # Strip any trailing punctuation or whitespace
                             raw_url = tool_output.split("SERVICENOW_LINK:")[-1].strip()
                             # Take only the URL part — stop at first whitespace or newline
-                            import re
                             url_match = re.search(r'https?://[^\s
 
 '"\\]+', raw_url)

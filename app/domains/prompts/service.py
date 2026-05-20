@@ -241,6 +241,25 @@ class PromptService:
                     prompt_key=prompt_key,
                     content=content,
                     updated_by=seeded_by,
+
+    async def force_update_default_prompts(self, updated_by: str = "system") -> int:
+        """
+        Force-updates ALL prompts from defaults.py into MongoDB.
+        Overwrites existing prompts.
+        Use this when system prompt rules change during development.
+        In production use the Admin UI instead.
+        """
+        updated = 0
+        for (agent_id, prompt_key), content in _DEFAULT_PROMPTS.items():
+            await self.upsert_prompt(
+                agent_id=agent_id,
+                prompt_key=prompt_key,
+                content=content,
+                updated_by=updated_by,
+            )
+            updated += 1
+        logger.info("Force-updated %d prompts from defaults.py", updated)
+        return updated
                 )
                 seeded += 1
 

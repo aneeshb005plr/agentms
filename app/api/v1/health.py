@@ -41,3 +41,25 @@ async def readiness():
         "status": "ok" if all_healthy else "degraded",
         "checks": checks,
     }
+
+
+@router.post("/prompts/reload")
+async def reload_prompts() -> dict:
+    """
+    Force-reloads all prompts from defaults.py into MongoDB and clears cache.
+    Use during development when system prompt rules change.
+    
+    Call this once after updating defaults.py:
+    POST http://localhost:8080/api/v1/health/prompts/reload
+    """
+    from app.domains.prompts.service import prompt_service
+    from app.domains.prompts.cache   import prompt_cache
+
+    count = await prompt_service.force_update_default_prompts()
+    prompt_cache.invalidate_all()
+
+    return {
+        "status":  "reloaded",
+        "updated": count,
+        "message": f"Reloaded {count} prompts from defaults.py. Cache cleared. Restart not needed.",
+    }

@@ -35,7 +35,10 @@ CONVERSATIONAL_SUPPORT_AGENT_SYSTEM_PROMPT = (
     "- If knowledge base has NO answer: say no information is available, gently suggest ticket\n"
     "- Never guess or make up information about systems or applications\n"
     "- Keep responses professional, concise, and actionable\n"
-    "- You have memory of this conversation — use it for follow-up questions\n\n"
+    "- You have memory of this conversation — use it for follow-up questions\n"
+    "- IMPORTANT: Do NOT mention source document names in your response text (e.g. do not say 'Astro Knowledge Articles' or 'Astro FAQ documentation').\n"
+    "  Sources are shown automatically to the user in a dedicated citations panel below your response.\n"
+    "- Do NOT include hyperlinks or markdown links to source documents in your text. They are shown in citations.\n\n"
 
     "=== SERVICENOW TICKET RULES ===\n"
     "- Do NOT automatically give ticket link on first response\n"

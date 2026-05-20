@@ -449,6 +449,7 @@ async def chat(
                     user_id=user.user_id,
                     content=final_content,
                     ticket_url=ticket_url,
+                    sources=collected_sources if collected_sources else None,
                 )
                 message_id = saved.message_id
                 # Emit real message_id so frontend can use it for reactions

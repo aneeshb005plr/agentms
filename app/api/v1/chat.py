@@ -51,6 +51,67 @@ logger = logging.getLogger(__name__)
 router  = APIRouter(prefix="/chat", tags=["Chat"])
 
 
+async def _generate_suggestions(
+    search_results: list[dict],
+    user_message:   str,
+) -> list[str]:
+    """
+    Generates 2 grounded follow-up question suggestions.
+
+    Grounded = based ONLY on topics covered in the search results.
+    This ensures every suggestion is answerable from the knowledge base.
+    Returns empty list if no search results (no search = no suggestions).
+
+    Uses fast LLM (gpt-4o-mini) — quick and cheap.
+    """
+    if not search_results:
+        # No search results — cannot generate grounded suggestions
+        return []
+
+    try:
+        from app.agents.clients.llm_client import llm_client
+        from app.domains.prompts.cache import prompt_cache
+        from app.domains.prompts.defaults import SUGGESTION_QUESTIONS_PROMPT
+        from langchain_core.messages import HumanMessage
+
+        # Summarise what topics the chunks cover
+        chunk_topics = "\n".join(
+            f"- {s['file_name']} ({s['application']})"
+            for s in search_results[:5]
+            if s.get("file_name")
+        )
+
+        if not chunk_topics:
+            return []
+
+        # Format prompt
+        prompt = SUGGESTION_QUESTIONS_PROMPT.format(
+            topic=user_message[:100],
+            chunk_topics=chunk_topics,
+        )
+
+        response = await llm_client.fast.ainvoke([HumanMessage(content=prompt)])
+        raw = response.content.strip()
+
+        # Parse JSON array
+        import re
+        match = re.search(r'[[].*?[]]', raw, re.DOTALL)
+        if match:
+            suggestions = json.loads(match.group(0))
+            # Validate — must be list of strings, max 2, max 100 chars each
+            if isinstance(suggestions, list):
+                return [
+                    str(s)[:100]
+                    for s in suggestions[:2]
+                    if isinstance(s, str) and len(s.strip()) > 5
+                ]
+
+    except Exception as e:
+        logger.debug("Suggestion LLM call failed: %s", str(e))
+
+    return []
+
+
 async def _repair_checkpoint_after_cancel(session_id: str) -> None:
     """
     Repairs LangGraph checkpoint after a cancelled stream.
@@ -278,17 +339,27 @@ async def chat(
                             # Split on SERVICENOW_LINK: then take first line
                             # Strip any trailing punctuation or whitespace
                             raw_url = tool_output.split("SERVICENOW_LINK:")[-1].strip()
-                            # Take only the URL part — stop at first whitespace or newline
-                            url_match = re.search(r'https?://[^\s
-
-'"\\]+', raw_url)
+                            url_match = re.search(r"https?://[^ ]+", raw_url)
                             if url_match:
-                                ticket_url = url_match.group(0).rstrip(".,;:'")")
-
+                                ticket_url = url_match.group(0).rstrip('.,;:')
                         found = "NO_RESULTS_FOUND" not in tool_output
                         await event_queue.put(
                             _fmt("tool_result", {"tool": tool_name, "found": found})
                         )
+
+                        # Extract citations from search tool output
+                        if tool_name == "search_knowledge_base" and "SOURCES_JSON:" in tool_output:
+                            try:
+                                sources_raw = tool_output.split("SOURCES_JSON:")[-1].split("\n")[0].strip()
+                                parsed = json.loads(sources_raw)
+                                # Merge with existing — multiple searches accumulate
+                                seen_urls = {s["source_url"] for s in collected_sources}
+                                for s in parsed:
+                                    if s["source_url"] not in seen_urls:
+                                        collected_sources.append(s)
+                                        seen_urls.add(s["source_url"])
+                            except Exception as e:
+                                logger.debug("Source extraction failed: %s", str(e))
 
                     # LLM call completed — collect token usage
                     elif event_name == "on_chat_model_end":
@@ -388,10 +459,22 @@ async def chat(
                 if await conversation.should_generate_summary(session_id):
                     logger.info("Summary trigger reached for session: %s", session_id)
 
-                # Emit done event
+                # Generate grounded suggestions (non-blocking)
+                suggestions = []
+                try:
+                    suggestions = await _generate_suggestions(
+                        search_results=collected_sources,
+                        user_message=user_message,
+                    )
+                except Exception as e:
+                    logger.debug("Suggestion generation failed: %s", str(e))
+
+                # Emit done event with sources and suggestions
                 yield _fmt("done", {
                     "message_id": message_id,
                     "ticket_url": ticket_url,
+                    "sources":     collected_sources if collected_sources else [],
+                    "suggestions": suggestions,
                 })
 
                 # Auto-generate title from first user message
@@ -497,9 +580,9 @@ async def chat_sync(
             tool_output = str(event.get("data", {}).get("output", ""))
             if tool_name == "get_servicenow_link" and "SERVICENOW_LINK:" in tool_output:
                 raw_url  = tool_output.split("SERVICENOW_LINK:")[-1].strip()
-                url_match = re.search(r'https?://[^\s\n\\"']+', raw_url)
+                url_match = re.search(r"https?://[^ ]+", raw_url)
                 if url_match:
-                    ticket_url = url_match.group(0).rstrip(".,;:'\")")
+                    ticket_url = url_match.group(0).rstrip('.,;:')
 
         # Collect token usage
         elif event_name == "on_chat_model_end":

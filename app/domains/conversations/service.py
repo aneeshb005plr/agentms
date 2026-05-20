@@ -67,7 +67,7 @@ class ConversationService:
         )
         docs     = result["conversations"]
         has_more = result["has_more"]
-        convs    = [ConversationResponse(**self._map_conv(doc)) for doc in docs]
+        convs    = [self._repo._to_conversation_response(doc) for doc in docs]
         return {
             "conversations": [c.model_dump() for c in convs],
             "has_more":      has_more,
@@ -286,7 +286,7 @@ class ConversationService:
             title = response.content.strip()
 
             # Sanitise — remove quotes, limit length
-            title = title.strip('"'').strip()
+            title = title.strip('"\'').strip()
             if len(title) > 60:
                 title = title[:60] + "..."
             if not title:

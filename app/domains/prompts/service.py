@@ -56,6 +56,11 @@ _DEFAULT_PROMPTS: dict[tuple[str, str], str] = {
         PromptCache.CONVERSATIONAL_SUPPORT_AGENT,
         PromptCache.CONVERSATION_SUMMARY,
     ): prompt_defaults.CONVERSATION_SUMMARY_PROMPT,
+
+    (
+        PromptCache.SUGGESTION_GENERATION,
+        PromptCache.SUGGESTION_PROMPT,
+    ): prompt_defaults.SUGGESTION_QUESTIONS_PROMPT,
 }
 
 
@@ -241,6 +246,11 @@ class PromptService:
                     prompt_key=prompt_key,
                     content=content,
                     updated_by=seeded_by,
+                )
+                seeded += 1
+
+        if seeded:
+            logger.info("Seeded %d default prompts into MongoDB", seeded)
 
     async def force_update_default_prompts(self, updated_by: str = "system") -> int:
         """
@@ -260,13 +270,6 @@ class PromptService:
             updated += 1
         logger.info("Force-updated %d prompts from defaults.py", updated)
         return updated
-                )
-                seeded += 1
-
-        if seeded:
-            logger.info("Seeded %d default prompts into MongoDB", seeded)
-        else:
-            logger.info("Default prompts already exist — skipping seed")
 
     # ── Redis publisher ───────────────────────────────────────────────────────
 

@@ -70,9 +70,17 @@ async def _generate_suggestions(
 
     try:
         from app.agents.clients.llm_client import llm_client
-        from app.domains.prompts.cache import prompt_cache
-        from app.domains.prompts.defaults import SUGGESTION_QUESTIONS_PROMPT
+        from app.domains.prompts.cache import prompt_cache, PromptCache
         from langchain_core.messages import HumanMessage
+
+        # Load suggestion prompt via cache (MongoDB → defaults.py fallback)
+        prompt_template = prompt_cache.get(
+            PromptCache.SUGGESTION_GENERATION,
+            PromptCache.SUGGESTION_PROMPT,
+        )
+        if not prompt_template:
+            from app.domains.prompts.defaults import SUGGESTION_QUESTIONS_PROMPT
+            prompt_template = SUGGESTION_QUESTIONS_PROMPT
 
         # Summarise what topics the chunks cover
         chunk_topics = "\n".join(
@@ -85,7 +93,7 @@ async def _generate_suggestions(
             return []
 
         # Format prompt
-        prompt = SUGGESTION_QUESTIONS_PROMPT.format(
+        prompt = prompt_template.format(
             topic=user_message[:100],
             chunk_topics=chunk_topics,
         )
@@ -666,9 +674,20 @@ async def stop_stream(
 async def get_sessions(
     user:         CurrentUser,
     conversation: ConversationSvc,
-) -> list:
-    sessions = await conversation.get_user_sessions(user.user_id)
-    return [s.model_dump() for s in sessions]
+    before:       str | None = None,   # ISO datetime cursor for pagination
+    limit:        int        = 20,
+) -> dict:
+    """
+    Returns paginated conversation list for sidebar.
+    First load: no before param → latest 20 conversations.
+    Load more: before=ISO datetime of oldest conversation in current list.
+    """
+    result = await conversation.get_user_sessions(
+        user_id=user.user_id,
+        limit=limit,
+        before=before,
+    )
+    return result
 
 
 @router.post("/sessions")

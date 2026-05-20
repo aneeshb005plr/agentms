@@ -19,12 +19,14 @@ class PromptCache:
     # ── Agent ID constants ────────────────────────────────────────────────────
     CONVERSATIONAL_SUPPORT_AGENT = "conversational_support_agent"
     TITLE_GENERATION             = "title_generation"
+    SUGGESTION_GENERATION        = "suggestion_generation"
 
     # ── Prompt key constants ──────────────────────────────────────────────────
     SYSTEM_PROMPT        = "system_prompt"
     QUERY_REWRITE        = "query_rewrite"
     TITLE_PROMPT         = "title_prompt"
     CONVERSATION_SUMMARY = "conversation_summary"
+    SUGGESTION_PROMPT    = "suggestion_prompt"
 
     def __init__(self):
         self._cache: dict[str, str] = {}

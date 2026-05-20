@@ -53,13 +53,25 @@ class ConversationService:
         doc = await self._repo.create_conversation(data)
         return self._repo._to_conversation_response(doc)
 
-    async def get_user_sessions(self, user_id: str) -> list[ConversationResponse]:
-        """Returns all conversations for sidebar — newest first."""
-        docs = await self._repo.get_user_conversations(
+    async def get_user_sessions(
+        self,
+        user_id: str,
+        limit:   int = 20,
+        before:  str | None = None,
+    ) -> dict:
+        """Returns paginated conversations for sidebar — newest first."""
+        result = await self._repo.get_user_conversations(
             user_id=user_id,
-            limit=settings.CONVERSATION_HISTORY_LIMIT,
+            limit=limit,
+            before=before,
         )
-        return [self._repo._to_conversation_response(d) for d in docs]
+        docs     = result["conversations"]
+        has_more = result["has_more"]
+        convs    = [ConversationResponse(**self._map_conv(doc)) for doc in docs]
+        return {
+            "conversations": [c.model_dump() for c in convs],
+            "has_more":      has_more,
+        }
 
     async def delete_session(
         self,
@@ -274,7 +286,7 @@ class ConversationService:
             title = response.content.strip()
 
             # Sanitise — remove quotes, limit length
-            title = title.strip('"').strip("'").strip()
+            title = title.strip('"'').strip()
             if len(title) > 60:
                 title = title[:60] + "..."
             if not title:

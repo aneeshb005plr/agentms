@@ -128,14 +128,24 @@ class ConversationRepository:
 
     async def get_user_conversations(
         self,
-        user_id: str,
-        limit:   int = 50,
-    ) -> list[dict]:
-        """Returns conversation list for sidebar — newest first."""
+        user_id:    str,
+        limit:      int = 20,
+        before:     str | None = None,    # ISO datetime cursor for pagination
+    ) -> dict:
+        """
+        Returns paginated conversation list for sidebar — newest first.
+        Uses cursor-based pagination via last_message_at timestamp.
+        Returns: { conversations: list, has_more: bool }
+        """
+        query: dict = {"user_id": user_id, "is_deleted": False}
+        if before:
+            from datetime import datetime
+            query["last_message_at"] = {"$lt": before}
+
         cursor = self._conv.find(
-            {"user_id": user_id, "is_deleted": False},
+            query,
             sort=[("last_message_at", DESCENDING)],
-            limit=limit,
+            limit=limit + 1,    # fetch one extra to detect has_more
             projection={
                 "conversation_id": 1,
                 "user_id":         1,
@@ -149,7 +159,12 @@ class ConversationRepository:
                 "is_deleted":      1,
             },
         )
-        return [doc async for doc in cursor]
+        docs = [doc async for doc in cursor]
+        has_more = len(docs) > limit
+        return {
+            "conversations": docs[:limit],
+            "has_more":      has_more,
+        }
 
     async def update_conversation(
         self,

@@ -331,7 +331,14 @@ async def chat(
                     # Tool finished
                     elif event_name == "on_tool_end":
                         tool_name   = event.get("name", "")
-                        tool_output = str(event.get("data", {}).get("output", ""))
+                        # on_tool_end output is a ToolMessage object in astream_events v2
+                        # Must extract .content not str() the whole object
+                        raw_output  = event.get("data", {}).get("output", "")
+                        tool_output = (
+                            raw_output.content
+                            if hasattr(raw_output, "content")
+                            else str(raw_output)
+                        )
 
                         # Extract ServiceNow URL — get clean URL only
                         nonlocal ticket_url
@@ -576,8 +583,13 @@ async def chat_sync(
 
         # Extract ticket URL
         elif event_name == "on_tool_end":
-            tool_name   = event.get("name", "")
-            tool_output = str(event.get("data", {}).get("output", ""))
+            tool_name  = event.get("name", "")
+            raw_output  = event.get("data", {}).get("output", "")
+            tool_output = (
+                raw_output.content
+                if hasattr(raw_output, "content")
+                else str(raw_output)
+            )
             if tool_name == "get_servicenow_link" and "SERVICENOW_LINK:" in tool_output:
                 raw_url  = tool_output.split("SERVICENOW_LINK:")[-1].strip()
                 url_match = re.search(r"https?://[^ ]+", raw_url)

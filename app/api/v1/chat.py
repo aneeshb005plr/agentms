@@ -363,16 +363,21 @@ async def chat(
                         )
 
                         # Extract citations from search tool output
+                        # New schema: no rerank_score — cited chunks are quality-filtered
                         if tool_name == "search_knowledge_base" and "SOURCES_JSON:" in tool_output:
                             try:
                                 sources_raw = tool_output.split("SOURCES_JSON:")[-1].split("\n")[0].strip()
                                 parsed = json.loads(sources_raw)
-                                # Merge with existing — multiple searches accumulate
-                                seen_urls = {s["source_url"] for s in collected_sources}
+                                seen_urls = {s.get("source_url", "") for s in collected_sources}
                                 for s in parsed:
-                                    if s["source_url"] not in seen_urls:
-                                        collected_sources.append(s)
-                                        seen_urls.add(s["source_url"])
+                                    url = s.get("source_url", "")
+                                    if url not in seen_urls:
+                                        collected_sources.append({
+                                            "file_name":   s.get("file_name", ""),
+                                            "source_url":  url,
+                                            "application": s.get("application", ""),
+                                        })
+                                        seen_urls.add(url)
                             except Exception as e:
                                 logger.debug("Source extraction failed: %s", str(e))
 

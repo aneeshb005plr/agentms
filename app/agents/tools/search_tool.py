@@ -1,19 +1,22 @@
 # app/agents/tools/search_tool.py
 # Knowledge base search tool — wraps VectorClient.
 #
-# The Vector API answer field is used as PRIMARY answer.
-# It is generated after full semantic search + reranking + synthesis.
-# Our LLM enriches this with conversational context — does not re-synthesise.
+# Vector API now returns only CITED chunks (not all retrieved chunks).
+# answer_available is the authoritative signal — always check it first.
 #
-# Tool output structure:
-#   ANSWER:          → primary answer from Vector API (agent uses this)
-#   SUPPORTING SOURCES: → chunks for source attribution only
+# Tool output format:
+#   SEARCH_RESULTS for query: '...'
+#   Application identified: Astro        (if single app detected)
+#   SOURCES_JSON:[{...}]                 (cited sources for citation UI)
+#   ANSWER:
+#   {pre-synthesised answer text}
+#   SUPPORTING SOURCES (N articles):
+#   [Source 1] ...
 #
-# Agent behaviour based on tool output:
-#   has answer       → enrich with context, add ticket link if needed
-#   NO_RESULTS_FOUND → inform user, gently suggest ticket
-#   SEARCH_ERROR     → inform user, suggest ticket
+# Agent uses ANSWER as primary — enriches with conversational context.
+# NO_RESULTS_FOUND returned when answer_available=False — agent tells user gracefully.
 
+import json
 import logging
 
 from langchain_core.tools import tool
@@ -25,19 +28,17 @@ logger = logging.getLogger(__name__)
 
 def _format_chunk(chunk: VectorChunk, index: int) -> str:
     """
-    Formats a single chunk as a supporting source reference.
-    Only includes source_url if it is a valid URL (starts with http).
-    URLs come from chunks.source_url — NOT from the answer field.
+    Formats a cited chunk as a source reference for the agent.
+    source_url only included if it starts with http (SharePoint URLs).
     """
     lines = [f"[Source {index + 1}]"]
     if chunk.file_name:
         lines.append(f"File: {chunk.file_name}")
     if chunk.application:
         lines.append(f"Application: {chunk.application}")
-    # Only include URL if valid
     if chunk.source_url and chunk.source_url.startswith("http"):
         lines.append(f"URL: {chunk.source_url}")
-    lines.append(f"Relevance: {chunk.rerank_score:.2f}")
+    # Include a brief excerpt so agent has context for any gap-filling
     excerpt = chunk.text[:200] + "..." if len(chunk.text) > 200 else chunk.text
     lines.append(f"Excerpt: {excerpt}")
     return "\n".join(lines)
@@ -70,8 +71,8 @@ async def search_knowledge_base(query: str) -> str:
                  "how to reset password in ServiceNow portal"
 
     Returns:
-        A pre-synthesised answer from the knowledge base along with supporting
-        sources, or a message indicating no relevant information was found.
+        A pre-synthesised answer from the knowledge base along with cited sources,
+        or a message indicating no relevant information was found.
     """
     logger.info("search_knowledge_base called — query: %s", query)
 
@@ -81,66 +82,58 @@ async def search_knowledge_base(query: str) -> str:
         logger.error("Vector search failed: %s", str(e))
         return (
             "SEARCH_ERROR: Knowledge base search failed due to a technical issue. "
-            "Inform the user and suggest raising a ServiceNow ticket if their "
-            "issue is urgent."
+            "Inform the user and suggest raising a ServiceNow ticket if urgent."
         )
 
-    if not result.has_results:
+    # answer_available is the authoritative signal from the API
+    # When False: answer=None, chunks=[] — knowledge base has no relevant content
+    if not result.answer_available:
         return (
             f"NO_RESULTS_FOUND: No relevant information found in the knowledge "
             f"base for query: '{query}'. "
             "Do not guess or make up information. "
-            "Inform the user that no information is currently available for their "
-            "question. If their issue seems genuine, gently suggest they raise a "
-            "ticket for further assistance — do not force this."
+            "Inform the user no information is currently available. "
+            "If their issue seems genuine, gently suggest raising a ticket."
         )
 
-    # Build output with answer as primary
-    output_parts = [
-        f"SEARCH_RESULTS for query: '{query}'",
-        "",
-    ]
+    output_parts = [f"SEARCH_RESULTS for query: '{query}'", ""]
 
     if result.app_identified:
         output_parts.append(f"Application identified: {result.app_identified}")
         output_parts.append("")
 
-    # Structured source data for citation extraction by chat.py
-    # chat.py reads this from on_tool_end events to populate sources field
-    # Format: SOURCES_JSON:{json_array}
-    import json
+    # Embed cited sources as structured JSON for citation extraction by chat.py
+    # chat.py reads this from on_tool_end events (ToolMessage.content)
+    # All chunks here are cited — no rerank_score filtering needed
     sources_data = [
         {
-            "file_name":    chunk.file_name,
-            "source_url":   chunk.source_url if chunk.source_url and chunk.source_url.startswith("http") else "",
-            "application":  chunk.application or "",
-            "rerank_score": round(chunk.rerank_score, 3),
+            "file_name":  chunk.file_name,
+            "source_url": chunk.source_url,
+            "application": chunk.application or "",
         }
-        for chunk in result.chunks[:5]
-        if chunk.rerank_score >= 0.5
+        for chunk in result.chunks
+        if chunk.file_name   # skip any chunks without a file name
     ]
     if sources_data:
         output_parts.append(f"SOURCES_JSON:{json.dumps(sources_data)}")
         output_parts.append("")
 
-    # Primary answer — generated by Vector API after full semantic search + reranking
-    if result.answer:
-        output_parts.extend([
-            "ANSWER:",
-            result.answer,
-            "",
-            "Use the above ANSWER as the primary basis for your response. "
-            "Enrich it with conversational context from the chat history. "
-            "Do not re-synthesise from sources — the answer is already high quality.",
-            "",
-        ])
+    # Primary answer — generated by Vector API after full semantic search + synthesis
+    # Agent enriches with conversational context but does NOT re-synthesise
+    output_parts.extend([
+        "ANSWER:",
+        result.answer or "",
+        "",
+        "Use the ANSWER above as the primary basis for your response. "
+        "Enrich it with conversational context from the chat history. "
+        "Do not re-synthesise from the sources — the answer is already high quality.",
+        "",
+    ])
 
-    # Supporting sources for reference
+    # Supporting sources for agent context (already cited, high quality)
     if result.chunks:
-        output_parts.append(
-            f"SUPPORTING SOURCES ({len(result.chunks)} articles):"
-        )
-        for i, chunk in enumerate(result.chunks[:5]):   # max 5 sources shown
+        output_parts.append(f"CITED SOURCES ({result.cited_chunks} articles):")
+        for i, chunk in enumerate(result.chunks[:5]):
             output_parts.append(_format_chunk(chunk, i))
             output_parts.append("")
 

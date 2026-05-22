@@ -53,27 +53,26 @@ router  = APIRouter(prefix="/chat", tags=["Chat"])
 
 async def _generate_suggestions(
     search_results: list[dict],
-    user_message:   str,
+    answer_text:    str,
 ) -> list[str]:
     """
     Generates 2 grounded follow-up question suggestions.
 
-    Grounded = based ONLY on topics covered in the search results.
-    This ensures every suggestion is answerable from the knowledge base.
-    Returns empty list if no search results (no search = no suggestions).
+    Grounding strategy — two layers:
+    1. Answer text (primary) — anything in the answer is definitely in the KB.
+    2. Cited chunk excerpts (secondary) — related topics in the same documents.
 
+    Both layers together give the LLM rich but validated context.
+    Returns empty list if no answer text or no search results.
     Uses fast LLM (gpt-4o-mini) — quick and cheap.
     """
-    if not search_results:
-        # No search results — cannot generate grounded suggestions
+    if not answer_text or not search_results:
         return []
 
     try:
-        from app.agents.clients.llm_client import llm_client
         from app.domains.prompts.cache import prompt_cache, PromptCache
         from langchain_core.messages import HumanMessage
 
-        # Load suggestion prompt via cache (MongoDB → defaults.py fallback)
         prompt_template = prompt_cache.get(
             PromptCache.SUGGESTION_GENERATION,
             PromptCache.SUGGESTION_PROMPT,
@@ -82,31 +81,38 @@ async def _generate_suggestions(
             from app.domains.prompts.defaults import SUGGESTION_QUESTIONS_PROMPT
             prompt_template = SUGGESTION_QUESTIONS_PROMPT
 
-        # Summarise what topics the chunks cover
-        chunk_topics = "\n".join(
-            f"- {s['file_name']} ({s['application']})"
-            for s in search_results[:5]
-            if s.get("file_name")
-        )
+        # Layer 1 — answer text (primary grounding)
+        # First 800 chars has key content without wasting tokens
+        answer_excerpt = answer_text.strip()[:800]
 
-        if not chunk_topics:
-            return []
+        # Layer 2 — cited chunk excerpts (secondary grounding)
+        chunk_lines = []
+        for s in search_results[:4]:
+            file_name = s.get("file_name", "")
+            app       = s.get("application", "")
+            excerpt   = s.get("excerpt", "")
+            if file_name:
+                line = f"- [{file_name}]"
+                if app:
+                    line += f" ({app})"
+                if excerpt:
+                    line += f": {excerpt[:150]}"
+                chunk_lines.append(line)
 
-        # Format prompt
+        chunk_context = "\n".join(chunk_lines) if chunk_lines else "See cited articles above."
+
         prompt = prompt_template.format(
-            topic=user_message[:100],
-            chunk_topics=chunk_topics,
+            answer_text=answer_excerpt,
+            chunk_context=chunk_context,
         )
 
+        from app.agents.clients.llm_client import llm_client
         response = await llm_client.fast.ainvoke([HumanMessage(content=prompt)])
         raw = response.content.strip()
 
-        # Parse JSON array
-        import re
         match = re.search(r'[[].*?[]]', raw, re.DOTALL)
         if match:
             suggestions = json.loads(match.group(0))
-            # Validate — must be list of strings, max 2, max 100 chars each
             if isinstance(suggestions, list):
                 return [
                     str(s)[:100]
@@ -480,12 +486,14 @@ async def chat(
                 if await conversation.should_generate_summary(session_id):
                     logger.info("Summary trigger reached for session: %s", session_id)
 
-                # Generate grounded suggestions (non-blocking)
+                # Generate grounded suggestions
+                # Uses answer text (primary) + cited chunk context (secondary)
+                # Both layers ensure suggestions are answerable from knowledge base
                 suggestions = []
                 try:
                     suggestions = await _generate_suggestions(
                         search_results=collected_sources,
-                        user_message=user_message,
+                        answer_text=final_content,
                     )
                 except Exception as e:
                     logger.debug("Suggestion generation failed: %s", str(e))

@@ -138,13 +138,26 @@ class ConversationRepository:
         Returns: { conversations: list, has_more: bool }
         """
         query: dict = {"user_id": user_id, "is_deleted": False}
-        if before:
-            from datetime import datetime
-            query["last_message_at"] = {"$lt": before}
 
+        if before:
+            # Parse ISO string to datetime for correct MongoDB date comparison
+            # MongoDB stores last_message_at as ISODate — must compare as datetime
+            # Append Z if missing to force UTC parsing (backend stores UTC)
+            from datetime import datetime, timezone
+            normalized = before if before.endswith("Z") or "+" in before else before + "Z"
+            try:
+                before_dt = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+                query["last_message_at"] = {"$lt": before_dt}
+            except ValueError:
+                # If parsing fails, skip cursor — return from beginning
+                logger.warning("Invalid before cursor: %s — ignoring", before)
+
+        # Sort by created_at as tiebreaker when last_message_at is null
+        # New conversations (no messages yet) have last_message_at=null
+        # Using created_at as secondary sort ensures stable ordering
         cursor = self._conv.find(
             query,
-            sort=[("last_message_at", DESCENDING)],
+            sort=[("last_message_at", DESCENDING), ("created_at", DESCENDING)],
             limit=limit + 1,    # fetch one extra to detect has_more
             projection={
                 "conversation_id": 1,

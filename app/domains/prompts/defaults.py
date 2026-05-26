@@ -52,6 +52,27 @@ CONVERSATIONAL_SUPPORT_AGENT_SYSTEM_PROMPT = (
     "  - If user says issue is resolved, acknowledge positively, no ticket needed.\n"
 )
 
+QUERY_REWRITE_PROMPT = (
+    "You are a search query optimizer for a PwC IT support knowledge base.\n"
+    "Rewrite the user message below into a clear, specific search query.\n"
+    "The query should capture the core IT issue, application name, and symptom.\n"
+    "Return ONLY the rewritten query — no explanation, no prefix.\n\n"
+    "User message: {message}\n\n"
+    "Optimized search query:"
+)
+
+TITLE_GENERATION_PROMPT = (
+    "Generate a short, descriptive title for an IT support conversation.\n"
+    "The title should be 3-6 words, capturing the application and main issue.\n"
+    "Return ONLY the title — no quotes, no punctuation at the end.\n\n"
+    "Examples:\n"
+    "  User: I cannot login to SAP → SAP Login Issue\n"
+    "  User: How do I submit timesheet in Workday → Workday Timesheet Submission\n"
+    "  User: Astro is crashing on my laptop → Astro App Crashing\n\n"
+    "First user message: {message}\n\n"
+    "Title:"
+)
+
 SUGGESTION_QUESTIONS_PROMPT = (
     "You are helping a PwC IT support user who just received an answer to their IT question.\n\n"
     "The answer they received was:\n"

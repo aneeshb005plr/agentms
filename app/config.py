@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # ── Service Identity ──────────────────────────────────────────────────────
     SERVICE_NAME:        str = "nextgenams-agent-engine"
     SERVICE_VERSION:     str = "1.0.0"
-    SERVICE_DESCRIPTION: str = "NextGenAMS AI Agent Engine - XYZ IT Support Automation"
+    SERVICE_DESCRIPTION: str = "NextGenAMS AI Agent Engine - PwC IT Support Automation"
     ENVIRONMENT:         str = "development"
     DEBUG:               bool = False
     SECRETS_VOLUME_PATH: str = DEFAULT_SECRETS_PATH
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     PORT: int = 8080
 
     # ── GenAI Shared Service (OpenAI compatible) ──────────────────────────────
-    # TBC from XYZ team
+    # TBC from PwC team
     GENAI_BASE_URL:    str | None       = None
     GENAI_API_KEY:     SecretStr | None = None
     GENAI_MODEL_SMART: str                 = "gpt-4o"       # complex reasoning
@@ -63,9 +63,9 @@ class Settings(BaseSettings):
     GENAI_MAX_TOKENS:  int                 = 2000
 
     # ── Vector API (Knowledge Base Search) ───────────────────────────────────
-    # TBC from XYZ team — URL, auth, request/response format
+    # TBC from PwC team — URL, auth, request/response format
     # Confirmed endpoint:
-    # POST https://webapp-docassist.east.dev.ngc.XYZinternal.com
+    # POST https://webapp-docassist.east.dev.ngc.pwcinternal.com
     #      /api/vector-retrieval/api/v1/nextgenams_dev/query
     # Request:  { "question": str, "top_k": int }
     # Response: { "question", "answer", "chunks": [...], "total_chunks" }
@@ -102,27 +102,49 @@ class Settings(BaseSettings):
     AUTH_ENABLED:   bool = False
     AUTH_ALGORITHM: str  = "RS256"
 
-    # JWKS URL — set per environment in .env or secrets volume
-    # IdP does NOT matter — PyJWKClient works with any standard JWKS endpoint
+    # ── Multi-issuer configuration (production-grade) ─────────────────────────
+    # Config-driven trusted issuers list — adding a new IdP = add config entry,
+    # zero code changes required.
     #
-    # Local dev (OpenAM):
-    #   AUTH_JWKS_URL=https://{openam-host}/openam/oauth2/keys
-    #   AUTH_JWKS_URL=https://{openam-host}/am/oauth2/realms/root/keys
+    # Each entry is a JSON object with:
+    #   name           — human label for logging/debugging
+    #   issuer_pattern — substring matched against token "iss" claim
+    #   jwks_url       — JWKS endpoint for this issuer's signing keys
+    #   verify_tid     — validate "tid" claim (Entra yes, OpenAM no)
+    #   tid            — expected tenant ID (required if verify_tid=true)
+    #   verify_appid   — validate "appid" claim (Entra yes, OpenAM no)
+    #   appid          — expected app ID (required if verify_appid=true)
     #
-    # Staging/Production (Entra ID):
-    #   AUTH_JWKS_URL=https://login.microsoftonline.com/{tenant_id}/v2.0/keys
-    #   XYZ Tenant ID: 513294a0-3e20-41b2-a970-6d30bf1546fa
+    # ── Local dev (OpenAM only) ───────────────────────────────────────────────
+    # AUTH_ISSUERS=[
+    #   {"name":"openam","issuer_pattern":"pwcinternal.com",
+    #    "jwks_url":"https://login-stg.pwcinternal.com:443/openam/oauth2/keys",
+    #    "verify_tid":false,"verify_appid":false}
+    # ]
     #
-    AUTH_JWKS_URL:  str | None = None
+    # ── Deployed on DocAssist infra (Entra only) ──────────────────────────────
+    # AUTH_ISSUERS=[
+    #   {"name":"entra","issuer_pattern":"sts.windows.net",
+    #    "jwks_url":"https://login.microsoftonline.com/831f8b7b-.../v2.0/keys",
+    #    "verify_tid":true,"tid":"831f8b7b-7bb6-4d34-a62b-7baf9792d24a",
+    #    "verify_appid":true,"appid":"1ecf0f21-8bd3-4ca1-a7e7-29aec744bc9f"}
+    # ]
+    #
+    # ── Both issuers (staging — supports both token types) ────────────────────
+    # AUTH_ISSUERS=[{openam entry},{entra entry}]
+    #
+    # When a new IdP is added by PwC — just append a new entry. No code change.
+    #
+    AUTH_ISSUERS: str = "[]"   # JSON string — parsed into list at startup
 
-    # Audience = App client ID (must match aud claim in token exactly)
-    # XYZ Entra ID:   ebcf221b-5920-4666-a827-7552acfec417
-    # XYZ OpenAM dev: urn:qsdemo:web:dev
-    AUTH_AUDIENCE:  str | None = None
+    # Legacy fields — kept for backward compatibility with existing deployments
+    # Ignored when AUTH_ISSUERS contains a non-empty array
+    AUTH_JWKS_URL: str | None = None
+    AUTH_AUDIENCE: str | None = None
 
-    # ── JWT Claim Mapping — confirmed XYZ Entra ID v2.0 token ─────────────────
+    # ── JWT Claim Mapping — confirmed PwC Entra ID v2.0 token ─────────────────
     # Same claims confirmed for both Entra ID and OpenAM:
-    #   uid          = XYZ internal user ID (e.g. abahuleyan001) — PRIMARY
+    #   uid          = PwC internal user ID (e.g. abahuleyan001) — PRIMARY
     #   oid          = Entra object ID (UUID) — fallback
     #   sub          = subject — last resort fallback
     #   email        = user email
@@ -140,14 +162,14 @@ class Settings(BaseSettings):
     SUMMARY_TRIGGER_COUNT:      int = 20   # generate rolling summary after N messages (Layer 2)
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    # Production: set to Angular app URL e.g. https://nextgenams.XYZ.com
+    # Production: set to Angular app URL e.g. https://nextgenams.pwc.com
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"])
 
     # ── Feature Flags ─────────────────────────────────────────────────────────
     ENABLE_SWAGGER: bool = True   # disabled automatically in production
 
     # ── HTTP Client ───────────────────────────────────────────────────────────
-    # Vector API is an internal XYZ endpoint — SSL cert not required
+    # Vector API is an internal PwC endpoint — SSL cert not required
     # Default False — no cert verification needed in any environment
     VECTOR_API_VERIFY_SSL: bool = False
 

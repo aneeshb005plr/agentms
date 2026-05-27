@@ -55,8 +55,14 @@ _FORMATTER_SYSTEM = (
     "  - **Bold** all: application names, team names, person names, error codes\n"
     "  - Add blank line between sections for breathing room\n"
     "  - Never output plain unstructured paragraphs\n"
-    "  - Preserve the exact closing sentence unchanged\n"
-    "  - Return ONLY the reformatted markdown — no preamble, no explanation\n"
+    "  - Return ONLY the reformatted markdown — no preamble, no explanation\n\n"
+    "STRICT URL AND LINK RULES (most important):\n"
+    "  - NEVER add new hyperlinks or markdown links not present in the original text\n"
+    "  - NEVER convert plain text sentences into hyperlinks\n"
+    "  - If original text has a URL (e.g. https://astro.pwc.com) preserve it exactly as-is\n"
+    "  - The sentence 'I have provided a support ticket link below' must be preserved\n"
+    "    EXACTLY as written — never bold it, link it, or modify it in any way\n"
+    "  - The ticket button is rendered separately by the system — never add ticket links\n"
 )
 
 

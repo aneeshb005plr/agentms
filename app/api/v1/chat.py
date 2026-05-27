@@ -397,6 +397,17 @@ async def chat(
                     logger.warning("Formatter error: %s — using raw content", str(e))
                     final_content = raw_content
 
+                # ── Strip ticket markdown links (safety net) ──────────────────
+                # Formatter may add [Raise ticket](url) links even though
+                # pipeline already renders the ticket button via ticket_url.
+                # Strip any ServiceNow markdown links to prevent duplicates.
+                if ticket_url:
+                    final_content = re.sub(
+                        r'\[([^\]]+)\]\(https?://[^)]*(?:service-now|servicenow)[^)]*\)',
+                        r'',
+                        final_content,
+                    )
+
                 # ── Stream formatted content token by token ───────────────────
                 # Split into chunks to maintain streaming feel
                 # 8-char chunks balance smoothness vs overhead

@@ -1,21 +1,22 @@
 # app/agents/pipeline/responses.py
-# Non-search intent handlers — fast LLM responses for CASUAL, VAGUE, RESOLVED.
+# Non-search intent handlers — fast LLM responses.
 #
-# All three use gpt-4o-mini with focused system prompts.
-# No static strings — every response is natural and contextually appropriate.
+# Handles: CASUAL, VAGUE, RESOLVED (via respond())
+#          ESCALATION (via generate_escalation_response()) — implicit ticket after failed steps
+#
 # TICKET intent is handled directly in chat.py (calls get_servicenow_link tool).
 #
 # MCP note:
-#   TICKET handling will expand when ServiceNow MCP is available:
+#   TICKET/ESCALATION handling will expand when ServiceNow MCP is available:
 #   Today  → get_servicenow_link() returns URL button
 #   Future → create_servicenow_ticket() creates ticket and returns ticket number
-#   The classifier and this module stay unchanged — only chat.py handler updates.
+#   These modules stay unchanged — only chat.py handler updates.
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-# ── System prompts for each non-search intent ─────────────────────────────────
+# ── System prompts ────────────────────────────────────────────────────────────
 
 _CASUAL_SYSTEM = (
     "You are NextGenAMS, a friendly PwC IT support assistant. "
@@ -44,6 +45,132 @@ _RESOLVED_SYSTEM = (
     "Do not offer further troubleshooting — the issue is resolved."
 )
 
+_ESCALATION_SYSTEM = (
+    "You are NextGenAMS, a PwC IT support assistant. "
+    "The user has tried the troubleshooting steps provided in this conversation "
+    "but their issue is still not resolved. "
+    "Write a warm, empathetic response that:\n"
+    "  1. Acknowledges that the user tried the steps and the issue persists\n"
+    "  2. Explains you are escalating to the IT support team\n"
+    "  3. Lists what the user should include in their support ticket:\n"
+    "     - The steps they tried from this conversation\n"
+    "     - Any error messages or codes they saw\n"
+    "     - The application name and their device type\n"
+    "  4. Ends with EXACTLY this sentence: "
+    "\"I have provided a support ticket link below.\"\n\n"
+    "Use markdown formatting — bold the ticket fields list. "
+    "Be empathetic and professional. 3-5 sentences total before the ticket fields."
+)
+
+# ── Escalation detection ──────────────────────────────────────────────────────
+
+_ESCALATION_DETECT_SYSTEM = (
+    "You determine if an IT support conversation needs escalation to a support ticket. "
+    "Answer ONLY with YES or NO.\n\n"
+    "Answer YES if ALL of these are true:\n"
+    "  1. The conversation history shows the assistant already provided troubleshooting steps\n"
+    "  2. The user's latest message indicates those steps did not work or were not sufficient\n\n"
+    "Answer NO if:\n"
+    "  - This is the first exchange (no prior troubleshooting steps were given)\n"
+    "  - The user is asking a new question unrelated to prior steps\n"
+    "  - The user wants more information but has not tried the steps yet\n"
+    "  - The message is a greeting, thanks, or casual response"
+)
+
+
+async def needs_escalation(
+    message: str,
+    history: list[dict],
+) -> bool:
+    """
+    Detects if conversation needs escalation BEFORE running the agent.
+    Uses gpt-4o-mini — fast (~150ms), cheap, accurate with conversation history.
+
+    Returns True only when:
+    - Prior troubleshooting steps were provided in history
+    - User's latest message indicates those steps failed
+
+    Fails closed → returns False (run agent normally, never block unnecessarily).
+    """
+    if not history:
+        return False  # no history = first message = cannot be escalation
+
+    try:
+        from app.agents.clients.llm_client import llm_client
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        # Build history context — last 6 turns for full picture
+        history_str = "Conversation history:\n"
+        for turn in history[-6:]:
+            role    = "User" if turn.get("role") == "user" else "Assistant"
+            content = str(turn.get("content", ""))[:300]
+            history_str += f"{role}: {content}\n"
+
+        user_text = (
+            f"{history_str}\n"
+            f"Latest user message: {message}\n\n"
+            "Does this need escalation? YES or NO:"
+        )
+
+        response = await llm_client.fast.ainvoke([
+            SystemMessage(content=_ESCALATION_DETECT_SYSTEM),
+            HumanMessage(content=user_text),
+        ])
+
+        answer = response.content.strip().upper()
+        result = answer.startswith("YES")
+
+        logger.info(
+            "Escalation detection: %s — '%s'",
+            "ESCALATE" if result else "no escalation",
+            message[:60],
+        )
+        return result
+
+    except Exception as e:
+        logger.warning("Escalation detection failed: %s — defaulting to False", str(e))
+        return False  # fail closed — run agent normally
+
+
+async def generate_escalation_response(
+    message: str,
+    history: list[dict],
+) -> str:
+    """
+    Generates a contextual, empathetic escalation response using gpt-4o-mini.
+    References what was actually tried in the conversation.
+    Always ends with "I have provided a support ticket link below."
+    """
+    try:
+        from app.agents.clients.llm_client import llm_client
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        history_str = "Conversation so far:\n"
+        for turn in history[-6:]:
+            role    = "User" if turn.get("role") == "user" else "Assistant"
+            content = str(turn.get("content", ""))[:300]
+            history_str += f"{role}: {content}\n"
+
+        response = await llm_client.fast.ainvoke([
+            SystemMessage(content=_ESCALATION_SYSTEM),
+            HumanMessage(content=f"{history_str}\nLatest user message: {message}"),
+        ])
+
+        return response.content.strip()
+
+    except Exception as e:
+        logger.warning("Escalation response generation failed: %s", str(e))
+        # Fallback — static but complete
+        return (
+            "I understand you have tried the troubleshooting steps and the issue persists. "
+            "I recommend escalating this to the IT support team for further investigation.\n\n"
+            "When submitting your ticket please include:\n"
+            "- **Steps tried:** the troubleshooting steps from this conversation\n"
+            "- **Error messages:** any codes or messages you saw\n"
+            "- **Application and device:** the app name and your device type\n\n"
+            "I have provided a support ticket link below."
+        )
+
 
 async def respond(
     intent:  str,
@@ -56,13 +183,10 @@ async def respond(
     Args:
         intent:  One of CASUAL | VAGUE | RESOLVED
         message: The user's message.
-        history: Recent conversation turns for context (optional).
+        history: Recent conversation turns for context.
 
     Returns:
         Response text string.
-
-    Raises:
-        ValueError for unknown intents (SEARCH and TICKET not handled here).
     """
     system_map = {
         "CASUAL":   _CASUAL_SYSTEM,
@@ -82,7 +206,6 @@ async def respond(
         from app.agents.clients.llm_client import llm_client
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        # Build context-aware user message
         context = ""
         if history:
             context = "Recent conversation:\n"
@@ -102,7 +225,6 @@ async def respond(
     except Exception as e:
         logger.warning("pipeline/responses.py LLM call failed: %s", str(e))
 
-        # Fallback static responses — only used if LLM call fails
         fallbacks = {
             "CASUAL":   "Hello! How can I assist you with your IT needs today?",
             "VAGUE":    "I'd be happy to help. Could you tell me which application you're asking about and what specifically is happening?",

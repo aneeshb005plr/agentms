@@ -191,7 +191,53 @@ async def chat(
             })
             return
 
-        # SEARCH — pass to agent (search knowledge base + format response)
+        # ── SEARCH — check for implicit escalation BEFORE running agent ────────
+        # If conversation history shows prior troubleshooting steps were given
+        # AND user's message indicates those steps failed → handle as escalation.
+        # Pipeline generates response — agent never runs — no data integrity issues.
+        # Decision happens BEFORE streaming so response is complete and contextual.
+        if history_turns:
+            from app.agents.pipeline.responses import (
+                needs_escalation,
+                generate_escalation_response,
+            )
+            should_escalate = await needs_escalation(
+                message=user_message,
+                history=history_turns,
+            )
+
+            if should_escalate:
+                # Generate contextual empathetic response with gpt-4o-mini
+                escalation_text = await generate_escalation_response(
+                    message=user_message,
+                    history=history_turns,
+                )
+
+                # Get ticket URL
+                from app.agents.tools.ticket_tool import get_servicenow_link
+                ticket_result   = await get_servicenow_link.ainvoke({})
+                escalation_url: str | None = None
+                if ticket_result and "SERVICENOW_LINK:" in ticket_result:
+                    url_match = re.search(r"https?://[^ ]+", ticket_result)
+                    if url_match:
+                        escalation_url = url_match.group(0).rstrip(".,;:")
+
+                saved = await conversation.save_assistant_message(
+                    conversation_id=session_id,
+                    user_id=user.user_id,
+                    content=escalation_text,
+                    ticket_url=escalation_url,
+                )
+                yield _fmt("token", {"token": escalation_text})
+                yield _fmt("done", {
+                    "message_id":  saved.message_id,
+                    "ticket_url":  escalation_url,
+                    "sources":     [],
+                    "suggestions": [],  # no suggestions after escalation
+                })
+                return
+
+        # No escalation needed — pass to agent (search knowledge base + format response)
         agent_ran = True
 
         # ── 5. Run agent (classification == "search") ─────────────────────────

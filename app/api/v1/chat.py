@@ -37,6 +37,9 @@ from pydantic import BaseModel
 from app.agents.graph.master_graph            import master_graph
 from app.agents.graph.checkpoint_repair       import repair_checkpoint
 from app.agents.pipeline                      import classifier, responses, suggestions
+from app.agents.pipeline.classifier           import (
+    INTENT_SEARCH, INTENT_TICKET, INTENT_RESOLVED, INTENT_CASUAL, INTENT_VAGUE,
+)
 from app.domains.auth.dependencies            import CurrentUser
 from app.domains.conversations.schemas        import MessageReactionUpdate
 from app.dependencies                         import ConversationSvc
@@ -105,15 +108,31 @@ async def chat(
             content=user_message,
         )
 
-        # ── 3. Classify message ───────────────────────────────────────────────
-        msg_count    = await conversation.get_message_count(session_id)
-        is_first_msg = msg_count <= 1  # just saved user msg so count is 1
+        # ── 3. Get conversation history for multi-turn intent awareness ─────────
+        # Pass recent turns to classifier so "still not working" after troubleshooting
+        # is correctly classified as TICKET not VAGUE
+        history_result = await conversation.get_messages(conversation_id=session_id)
+        history_turns  = [
+            {"role": m.role, "content": m.content}
+            for m in (history_result.messages if history_result else [])[-4:]  # last 4 turns
+            if m.role in ("user", "assistant") and m.content
+        ]
 
-        classification = await classifier.classify(user_message, is_first_msg)
+        # ── 4. Classify intent ────────────────────────────────────────────────
+        intent = await classifier.classify(
+            message=user_message,
+            history=history_turns,
+        )
 
-        # ── 4. Handle non-search classifications (no agent needed) ────────────
-        if classification in ("greeting", "vague"):
-            response_text = responses.get(classification)
+        # ── 5. Route by intent ────────────────────────────────────────────────
+
+        # CASUAL / VAGUE / RESOLVED — fast LLM, no agent, no vector search
+        if intent in (INTENT_CASUAL, INTENT_VAGUE, INTENT_RESOLVED):
+            response_text = await responses.respond(
+                intent=intent,
+                message=user_message,
+                history=history_turns,
+            )
             saved = await conversation.save_assistant_message(
                 conversation_id=session_id,
                 user_id=user.user_id,
@@ -127,6 +146,49 @@ async def chat(
                 "suggestions": [],
             })
             return
+
+        # TICKET — user wants to escalate, call ticket tool directly (no agent, no search)
+        # MCP-ready: when ServiceNow MCP is available, replace get_servicenow_link()
+        # with mcp_create_ticket() here — classifier and responses.py stay unchanged
+        if intent == INTENT_TICKET:
+            from app.agents.tools.ticket_tool import get_servicenow_link
+            ticket_result = await get_servicenow_link.ainvoke({})
+            extracted_url: str | None = None
+            if ticket_result and "SERVICENOW_LINK:" in ticket_result:
+                import re as _re
+                url_match = _re.search(r"https?://[^ ]+", ticket_result)
+                if url_match:
+                    extracted_url = url_match.group(0).rstrip(".,;:")
+
+            if extracted_url:
+                response_text = (
+                    "I understand the issue is still not resolved. "
+                    "I have provided a support ticket link below — "
+                    "please include a description of the issue, "
+                    "the steps you have already tried, and any error messages you saw."
+                )
+            else:
+                response_text = (
+                    "I understand the issue is still not resolved. "
+                    "Please contact your IT support team directly to raise a ticket."
+                )
+
+            saved = await conversation.save_assistant_message(
+                conversation_id=session_id,
+                user_id=user.user_id,
+                content=response_text,
+                ticket_url=extracted_url,
+            )
+            yield _fmt("token", {"token": response_text})
+            yield _fmt("done", {
+                "message_id":  saved.message_id,
+                "ticket_url":  extracted_url,
+                "sources":     [],
+                "suggestions": [],
+            })
+            return
+
+        # SEARCH — pass to agent (search knowledge base + format response)
 
         # ── 5. Run agent (classification == "search") ─────────────────────────
         async def run_agent() -> None:

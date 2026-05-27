@@ -1,107 +1,150 @@
 # app/agents/pipeline/classifier.py
-# Message pre-classifier — runs before the agent on every message.
+# Intent-based message classifier — runs before the agent on every message.
 #
-# Responsibility:
-#   Decide whether a message should:
-#     "greeting" → return a warm response, skip agent + vector
-#     "vague"    → return clarification question, skip agent + vector
-#     "search"   → pass to agent unchanged
+# Production-grade approach (2026):
+#   Single gpt-4o-mini call with conversation context.
+#   Returns a named intent — handler logic in chat.py decides what to do.
+#   Adding a new intent = add to the prompt + add handler in chat.py. Zero other changes.
 #
-# Design:
-#   Greeting detection — pure Python, zero LLM cost.
-#     Fixed set of greeting strings. Only triggers on first conversation message.
-#     Greetings are universal and don't change — small fixed set is fine.
+# Intents:
+#   SEARCH        — IT question, how-to, guidance → agent runs
+#   TICKET        — user wants to escalate, raise a ticket → ticket tool directly
+#   RESOLVED      — user confirms issue is fixed → acknowledge positively
+#   CASUAL        — greeting, thanks, praise, frustration → fast LLM response
+#   VAGUE         — not enough context (first message only) → ask clarifying question
 #
-#   Vague detection — one gpt-4o-mini call (~150ms).
-#     Single YES/NO question: "is this a specific IT problem?"
-#     Uses mini model — cheap, fast, handles all edge cases including
-#     future apps, typos, unusual phrasing. No maintenance needed.
-#     Fails open → defaults to "search" (never blocks a real IT question).
+# Multi-turn awareness:
+#   Conversation history (last 3 turns) is passed to classifier.
+#   "Still not working" with prior context → TICKET (not VAGUE).
+#   Without history it would be classified incorrectly as VAGUE.
 #
-#   Everything else → "search" → agent runs normally.
+# MCP-ready:
+#   TICKET intent today → get_servicenow_link() returns URL
+#   TICKET intent with MCP → create_servicenow_ticket() creates ticket directly
+#   Handler in chat.py swaps the tool call — classifier stays unchanged.
 #
-# Called by: app/api/v1/chat.py — before agent invocation.
+# Fails open: classifier error → defaults to SEARCH (never blocks a real IT question)
 
 import logging
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Greeting strings — checked against first message only
-# Lowercase, stripped. Not a maintenance problem — greetings are universal.
-_GREETINGS: frozenset[str] = frozenset({
-    "hi", "hello", "hey", "hiya", "howdy",
-    "good morning", "good afternoon", "good evening", "good day",
-    "hi there", "hello there", "hey there",
-    "greetings", "sup", "what's up", "whats up",
-})
+# ── Intent constants ──────────────────────────────────────────────────────────
+# Use these in chat.py handler logic — not raw strings
+INTENT_SEARCH   = "SEARCH"
+INTENT_TICKET   = "TICKET"
+INTENT_RESOLVED = "RESOLVED"
+INTENT_CASUAL   = "CASUAL"
+INTENT_VAGUE    = "VAGUE"
 
-# Classifier prompt — single YES/NO question to gpt-4o-mini
-_CLASSIFY_SYSTEM = (
-    "You classify IT support messages. "
-    "Answer ONLY with YES or NO. No explanation."
+VALID_INTENTS = {INTENT_SEARCH, INTENT_TICKET, INTENT_RESOLVED, INTENT_CASUAL, INTENT_VAGUE}
+
+# ── Classifier prompt ─────────────────────────────────────────────────────────
+_SYSTEM = (
+    "You classify messages in a PwC IT support chatbot. "
+    "You will be given the recent conversation history and the latest user message. "
+    "Classify the latest user message into exactly ONE of these intents:\n\n"
+
+    "SEARCH   — User has an IT question, problem, how-to request, or guidance query "
+               "about a PwC application or system. This includes troubleshooting requests, "
+               "informational questions, and process guidance.\n"
+    "           Examples: 'I cannot login to SAP', 'how do I submit timesheet in Workday', "
+               "'what is Astro used for', 'steps to request VPN access'\n\n"
+
+    "TICKET   — User wants to escalate their issue, raise a support ticket, or has "
+               "indicated the troubleshooting steps did not resolve their problem.\n"
+    "           Examples: 'still not working', 'issue persists', 'please raise a ticket', "
+               "'can you raise a support request', 'nothing worked', 'issue is still there', "
+               "'I need to escalate this', 'raise an incident'\n\n"
+
+    "RESOLVED — User confirms their issue is fixed or no longer needs help.\n"
+    "           Examples: 'it worked', 'problem solved', 'thanks it is working now', "
+               "'issue resolved', 'that fixed it'\n\n"
+
+    "CASUAL   — Greeting, thanks, praise, emotional response, or casual message "
+               "with no IT support request.\n"
+    "           Examples: 'hi', 'hello', 'thanks', 'thank you so much', "
+               "'you are amazing', 'great help', 'good morning'\n\n"
+
+    "VAGUE    — Message is too vague to understand what the user needs and there is "
+               "NO prior conversation context to infer from. "
+               "IMPORTANT: Only classify as VAGUE if this is the first message AND "
+               "it has no application name, no error, no symptom, and no action. "
+               "If there is prior conversation history, classify as TICKET or SEARCH instead.\n"
+    "           Examples (first message only): 'I have an issue', 'something is wrong', "
+               "'I need help', 'not working'\n\n"
+
+    "Answer with ONLY the intent word — no explanation, no punctuation."
 )
 
-_CLASSIFY_USER = (
-    "Does this message contain a specific IT question, problem, or request "
-    "for guidance about a PwC application or system?\n\n"
-    "Answer YES if the message:\n"
-    "  - Describes an IT problem or error (e.g. cannot login, getting error 403)\n"
-    "  - Asks how to do something in an app (e.g. how do I submit timesheet in Workday)\n"
-    "  - Requests guidance or steps (e.g. steps to request software installation)\n"
-    "  - Asks for information about a PwC app or system (e.g. what is Astro used for)\n"
-    "  - Mentions a specific application name with any context\n\n"
-    "Answer NO if the message:\n"
-    "  - Is only a greeting with no IT content (e.g. hi, hello, good morning)\n"
-    "  - Is completely vague with no application and no context (e.g. I need help, "
-    "something is wrong, I have an issue)\n"
-    "  - Is clearly unrelated to IT or PwC systems (e.g. weather, personal questions)\n\n"
-    "Message: {message}\n\n"
-    "Answer YES or NO:"
+_USER_TEMPLATE = (
+    "{history}"
+    "Latest user message: {message}\n\n"
+    "Intent:"
 )
 
 
-async def classify(message: str, is_first_message: bool) -> str:
+async def classify(
+    message:      str,
+    history:      list[dict] | None = None,
+) -> str:
     """
-    Classifies a message before passing to the agent.
+    Classifies a user message into one of five intents.
 
     Args:
-        message:          Raw user message text.
-        is_first_message: True if this is the first message in the conversation.
+        message: The latest user message.
+        history: Recent conversation turns for multi-turn context.
+                 Each dict: { "role": "user"|"assistant", "content": str }
+                 Pass last 3-4 turns for best accuracy.
 
     Returns:
-        "greeting" — warm response, skip agent
-        "vague"    — clarification question, skip agent
-        "search"   — pass to agent as normal
+        One of: SEARCH | TICKET | RESOLVED | CASUAL | VAGUE
     """
-    cleaned = message.strip().lower().rstrip("!?.")
-
-    # ── Greeting — pure Python, zero cost ────────────────────────────────────
-    if is_first_message and cleaned in _GREETINGS:
-        logger.info("Classifier: greeting detected")
-        return "greeting"
-
-    # ── Vague — gpt-4o-mini single YES/NO call ────────────────────────────────
     try:
         from app.agents.clients.llm_client import llm_client
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        # Build conversation context string
+        history_str = ""
+        if history:
+            history_str = "Recent conversation:\n"
+            for turn in history[-4:]:  # last 4 turns max — enough context, not too many tokens
+                role    = "User" if turn.get("role") == "user" else "Assistant"
+                content = str(turn.get("content", ""))[:200]  # truncate long messages
+                history_str += f"{role}: {content}\n"
+            history_str += "\n"
+
+        user_text = _USER_TEMPLATE.format(
+            history=history_str,
+            message=message,
+        )
+
         response = await llm_client.fast.ainvoke([
-            SystemMessage(content=_CLASSIFY_SYSTEM),
-            HumanMessage(content=_CLASSIFY_USER.format(message=message)),
+            SystemMessage(content=_SYSTEM),
+            HumanMessage(content=user_text),
         ])
 
-        answer = response.content.strip().upper()
+        raw    = response.content.strip().upper()
+        intent = raw.split()[0] if raw else INTENT_SEARCH
 
-        if answer.startswith("NO"):
-            logger.info("Classifier: vague — '%s'", message[:60])
-            return "vague"
+        if intent not in VALID_INTENTS:
+            logger.warning(
+                "Classifier returned unknown intent '%s' for message '%s' — defaulting to SEARCH",
+                intent, message[:60],
+            )
+            return INTENT_SEARCH
 
-        logger.info("Classifier: search — '%s'", message[:60])
-        return "search"
+        logger.info(
+            "Classifier: %s — '%s'%s",
+            intent,
+            message[:60],
+            f" (with {len(history)} history turns)" if history else "",
+        )
+        return intent
 
     except Exception as e:
-        # Fail open — never block a real IT question due to classifier error
         logger.warning(
-            "Classifier failed: %s — defaulting to search", str(e)
+            "Classifier failed: %s — defaulting to SEARCH (fail open)", str(e)
         )
-        return "search"
+        return INTENT_SEARCH  # fail open — never block a real IT question

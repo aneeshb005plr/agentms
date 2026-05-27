@@ -331,6 +331,33 @@ async def chat(
             final_content = "".join(full_response)
 
             if final_content:
+                # ── Pipeline ticket safety net ────────────────────────────────
+                # If agent searched (SEARCH intent reached here) but found nothing
+                # AND agent did not call get_servicenow_link (ticket_url still null):
+                # Offer the ticket automatically — pipeline decision, not agent decision.
+                # This prevents: agent says "link below" but never calls the tool.
+                # Also covers: agent gives up without offering any resolution path.
+                #
+                # Condition: search was attempted (agent ran) + no sources found
+                # + no ticket URL yet from agent tool call
+                agent_searched    = len(collected_sources) == 0  # searched but found nothing
+                no_ticket_yet     = ticket_url is None
+                if agent_searched and no_ticket_yet:
+                    try:
+                        from app.agents.tools.ticket_tool import get_servicenow_link
+                        ticket_result = await get_servicenow_link.ainvoke({})
+                        if ticket_result and "SERVICENOW_LINK:" in ticket_result:
+                            url_match = re.search(r"https?://[^ ]+", ticket_result)
+                            if url_match:
+                                ticket_url = url_match.group(0).rstrip(".,;:")
+                                logger.info(
+                                    "Pipeline ticket safety net — auto-provided ticket URL "
+                                    "for session %s (agent found no KB answer)",
+                                    session_id,
+                                )
+                    except Exception as e:
+                        logger.warning("Pipeline ticket safety net failed: %s", str(e))
+
                 saved = await conversation.save_assistant_message(
                     conversation_id=session_id,
                     user_id=user.user_id,

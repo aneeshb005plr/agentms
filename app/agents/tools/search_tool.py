@@ -1,20 +1,9 @@
 # app/agents/tools/search_tool.py
 # Knowledge base search tool — wraps VectorClient.
 #
-# Vector API now returns only CITED chunks (not all retrieved chunks).
-# answer_available is the authoritative signal — always check it first.
-#
-# Tool output format:
-#   SEARCH_RESULTS for query: '...'
-#   Application identified: Astro        (if single app detected)
-#   SOURCES_JSON:[{...}]                 (cited sources for citation UI)
-#   ANSWER:
-#   {pre-synthesised answer text}
-#   SUPPORTING SOURCES (N articles):
-#   [Source 1] ...
-#
-# Agent uses ANSWER as primary — enriches with conversational context.
-# NO_RESULTS_FOUND returned when answer_available=False — agent tells user gracefully.
+# Passes full chunk text to agent — not truncated.
+# Agent uses ANSWER as structure + chunk text for detail.
+# This gives the agent everything it needs for rich, complete responses.
 
 import json
 import logging
@@ -28,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 def _format_chunk(chunk: VectorChunk, index: int) -> str:
     """
-    Formats a cited chunk as a source reference for the agent.
-    source_url only included if it starts with http (SharePoint URLs).
+    Formats a cited chunk with FULL text for agent context.
+    Full text gives the agent maximum detail to work with.
     """
     lines = [f"[Source {index + 1}]"]
     if chunk.file_name:
@@ -38,9 +27,10 @@ def _format_chunk(chunk: VectorChunk, index: int) -> str:
         lines.append(f"Application: {chunk.application}")
     if chunk.source_url and chunk.source_url.startswith("http"):
         lines.append(f"URL: {chunk.source_url}")
-    # Include a brief excerpt so agent has context for any gap-filling
-    excerpt = chunk.text[:200] + "..." if len(chunk.text) > 200 else chunk.text
-    lines.append(f"Excerpt: {excerpt}")
+    # Pass FULL chunk text — agent uses it to enrich and complete the response
+    # Truncating to 200 chars was losing critical detail (contacts, steps, etc.)
+    if chunk.text:
+        lines.append(f"Content:\n{chunk.text}")
     return "\n".join(lines)
 
 
@@ -49,30 +39,23 @@ async def search_knowledge_base(query: str) -> str:
     """
     Search the PwC IT support knowledge base for information related to the query.
 
-    Use this tool when the user asks an IT support question about any PwC application
-    or system. The knowledge base contains troubleshooting guides, how-to articles,
-    and IT support documentation.
+    Use this tool when the user asks an IT support question, how-to question,
+    or guidance request about any PwC application or system.
 
-    Call this tool with a clear, specific search query. If the user's question covers
-    multiple distinct issues, you may call this tool multiple times with different
-    focused queries.
-
-    Do NOT call this tool for:
-    - Greetings or casual conversation
-    - General knowledge questions unrelated to PwC IT support
-    - Questions where you already have sufficient context from previous tool calls
+    Call this tool with a clear, specific search query. For follow-up questions,
+    include context from the conversation history in the query.
 
     Args:
-        query: A clear, specific search query. Make it standalone — include
-               context from conversation history if this is a follow-up question.
+        query: Clear, specific search query including app name and context.
                Examples:
                  "SAP login authentication failure"
-                 "Workday timesheet submission error"
-                 "how to reset password in ServiceNow portal"
+                 "Workday timesheet submission steps"
+                 "USRPP application point of contact"
+                 "how to request VPN access PwC"
 
     Returns:
-        A pre-synthesised answer from the knowledge base along with cited sources,
-        or a message indicating no relevant information was found.
+        Pre-synthesised answer with full cited source content,
+        or NO_RESULTS_FOUND if knowledge base has no relevant information.
     """
     logger.info("search_knowledge_base called — query: %s", query)
 
@@ -85,15 +68,14 @@ async def search_knowledge_base(query: str) -> str:
             "Inform the user and suggest raising a ServiceNow ticket if urgent."
         )
 
-    # answer_available is the authoritative signal from the API
-    # When False: answer=None, chunks=[] — knowledge base has no relevant content
+    # answer_available is the authoritative signal
     if not result.answer_available:
         return (
-            f"NO_RESULTS_FOUND: No relevant information found in the knowledge "
-            f"base for query: '{query}'. "
+            f"NO_RESULTS_FOUND: No relevant information found for query: '{query}'. "
             "Do not guess or make up information. "
-            "Inform the user no information is currently available. "
-            "If their issue seems genuine, gently suggest raising a ticket."
+            "Inform the user this topic is not currently in the knowledge base. "
+            "For IT problems suggest raising a ticket. "
+            "For guidance questions suggest checking internal documentation."
         )
 
     output_parts = [f"SEARCH_RESULTS for query: '{query}'", ""]
@@ -102,38 +84,42 @@ async def search_knowledge_base(query: str) -> str:
         output_parts.append(f"Application identified: {result.app_identified}")
         output_parts.append("")
 
-    # Embed cited sources as structured JSON for citation extraction by chat.py
-    # chat.py reads this from on_tool_end events (ToolMessage.content)
-    # All chunks here are cited — no rerank_score filtering needed
+    # Embed cited sources for citation extraction by chat.py
     sources_data = [
         {
-            "file_name":  chunk.file_name,
-            "source_url": chunk.source_url,
+            "file_name":   chunk.file_name,
+            "source_url":  chunk.source_url,
             "application": chunk.application or "",
         }
         for chunk in result.chunks
-        if chunk.file_name   # skip any chunks without a file name
+        if chunk.file_name
     ]
     if sources_data:
         output_parts.append(f"SOURCES_JSON:{json.dumps(sources_data)}")
         output_parts.append("")
 
-    # Primary answer — generated by Vector API after full semantic search + synthesis
-    # Agent enriches with conversational context but does NOT re-synthesise
+    # Primary synthesised answer — use as the structure of your response
     output_parts.extend([
-        "ANSWER:",
+        "SYNTHESISED ANSWER (use as structure):",
         result.answer or "",
-        "",
-        "Use the ANSWER above as the primary basis for your response. "
-        "Enrich it with conversational context from the chat history. "
-        "Do not re-synthesise from the sources — the answer is already high quality.",
         "",
     ])
 
-    # Supporting sources for agent context (already cited, high quality)
+    # Full cited chunk content — use to enrich and complete the response
+    # These chunks were CITED by the LLM when building the answer above.
+    # They contain the full original text — use it to add detail, contacts,
+    # steps, or any information the synthesised answer may have summarised.
     if result.chunks:
-        output_parts.append(f"CITED SOURCES ({result.cited_chunks} articles):")
-        for i, chunk in enumerate(result.chunks[:5]):
+        output_parts.append(
+            f"FULL SOURCE CONTENT ({result.cited_chunks} cited articles):"
+        )
+        output_parts.append(
+            "Use this content to enrich your response with complete details. "
+            "Do not summarise away important specifics like names, emails, "
+            "step numbers, error codes, or contact details."
+        )
+        output_parts.append("")
+        for i, chunk in enumerate(result.chunks):
             output_parts.append(_format_chunk(chunk, i))
             output_parts.append("")
 

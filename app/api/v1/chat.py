@@ -379,10 +379,16 @@ async def chat(
                 if await conversation.should_generate_summary(session_id):
                     logger.info("Summary trigger reached for session: %s", session_id)
 
-                suggestion_list = await suggestions.generate(
-                    search_results=collected_sources,
-                    answer_text=final_content,
-                )
+                # Suppress suggestions when ticket was offered —
+                # user has reached the end of the help flow.
+                # Suggestions after a ticket are confusing and irrelevant.
+                if ticket_url:
+                    suggestion_list = []
+                else:
+                    suggestion_list = await suggestions.generate(
+                        search_results=collected_sources,
+                        answer_text=final_content,
+                    )
 
                 yield _fmt("done", {
                     "message_id":  message_id,

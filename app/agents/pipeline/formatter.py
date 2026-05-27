@@ -60,9 +60,12 @@ _FORMATTER_SYSTEM = (
     "  - NEVER add new hyperlinks or markdown links not present in the original text\n"
     "  - NEVER convert plain text sentences into hyperlinks\n"
     "  - If original text has a URL (e.g. https://astro.pwc.com) preserve it exactly as-is\n"
-    "  - The sentence 'I have provided a support ticket link below' must be preserved\n"
-    "    EXACTLY as written — never bold it, link it, or modify it in any way\n"
-    "  - The ticket button is rendered separately by the system — never add ticket links\n"
+    "  - The ticket button is rendered separately by the system — never add ticket links\n\n"
+    "TICKET SENTENCE RULES (critical):\n"
+    "  - NEVER add the sentence 'I have provided a support ticket link below' yourself\n"
+    "  - Only preserve it if it already exists verbatim in the original text\n"
+    "  - If the original text does not contain this sentence — do not add it under any circumstances\n"
+    "  - This sentence is controlled entirely by the system — not by you\n"
 )
 
 

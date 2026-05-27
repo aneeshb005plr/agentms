@@ -408,6 +408,26 @@ async def chat(
                         final_content,
                     )
 
+                # ── Strip orphaned ticket sentence (Layer 2 safety net) ───────
+                # "I have provided a support ticket link below" should ONLY appear
+                # when ticket_url is set (button rendered by frontend).
+                # If ticket_url is null but sentence exists — formatter or agent
+                # hallucinated it. Strip it to prevent confusing orphaned text.
+                # Covers edge cases: guidance responses, hallucination, any source.
+                _TICKET_SENTENCE = "I have provided a support ticket link below"
+                if not ticket_url and _TICKET_SENTENCE.lower() in final_content.lower():
+                    # Case-insensitive replace — handles any capitalisation variant
+                    import re as _re2
+                    final_content = _re2.sub(
+                        r'(?i)I have provided a support ticket link below\.?',
+                        '',
+                        final_content,
+                    ).strip()
+                    logger.info(
+                        "Stripped orphaned ticket sentence from response "
+                        "(ticket_url is null) for session %s", session_id
+                    )
+
                 # ── Stream formatted content token by token ───────────────────
                 # Split into chunks to maintain streaming feel
                 # 8-char chunks balance smoothness vs overhead

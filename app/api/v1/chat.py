@@ -270,9 +270,13 @@ async def chat(
                         if chunk and hasattr(chunk, "content") and chunk.content:
                             token = chunk.content
                             full_response.append(token)
-                            await event_queue.put(_fmt("token", {"token": token}))
+                            # Buffer only — do NOT stream to user yet
+                            # Formatter runs after agent completes to apply
+                            # proper markdown structure before user sees it
 
                     elif event_name == "on_chain_start" and node_name:
+                        # Keep thinking events — user sees progress while agent runs
+                        # This is important since we no longer stream tokens live
                         status = {"agent": "Thinking...", "tools": "Executing tool..."}.get(
                             node_name, "Processing..."
                         )
@@ -377,8 +381,29 @@ async def chat(
                     logger.info("Client disconnected mid-stream: %s", session_id)
                     break
 
-            # ── 6. Post-stream: save + suggestions + done event ───────────────
-            final_content = "".join(full_response)
+            # ── 6. Post-stream: format → stream → save → suggestions ─────────
+            raw_content   = "".join(full_response)
+            final_content = raw_content  # will be replaced by formatted version
+
+            if raw_content:
+                # ── Format response with markdown ─────────────────────────────
+                # Agent buffers plain text — formatter applies proper structure
+                # then we stream the formatted version to the user.
+                # This ensures user always sees properly formatted markdown.
+                from app.agents.pipeline.formatter import format_response
+                try:
+                    final_content = await format_response(raw_content)
+                except Exception as e:
+                    logger.warning("Formatter error: %s — using raw content", str(e))
+                    final_content = raw_content
+
+                # ── Stream formatted content token by token ───────────────────
+                # Split into chunks to maintain streaming feel
+                # 8-char chunks balance smoothness vs overhead
+                chunk_size = 8
+                for i in range(0, len(final_content), chunk_size):
+                    chunk = final_content[i:i + chunk_size]
+                    yield _fmt("token", {"token": chunk})
 
             if final_content:
                 # ── Pipeline ticket safety net ────────────────────────────────

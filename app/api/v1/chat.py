@@ -124,6 +124,9 @@ async def chat(
             history=history_turns,
         )
 
+        # Track whether agent actually ran — safety net only fires if agent ran
+        agent_ran = False
+
         # ── 5. Route by intent ────────────────────────────────────────────────
 
         # CASUAL / VAGUE / RESOLVED — fast LLM, no agent, no vector search
@@ -189,6 +192,7 @@ async def chat(
             return
 
         # SEARCH — pass to agent (search knowledge base + format response)
+        agent_ran = True
 
         # ── 5. Run agent (classification == "search") ─────────────────────────
         async def run_agent() -> None:
@@ -332,17 +336,14 @@ async def chat(
 
             if final_content:
                 # ── Pipeline ticket safety net ────────────────────────────────
-                # If agent searched (SEARCH intent reached here) but found nothing
-                # AND agent did not call get_servicenow_link (ticket_url still null):
-                # Offer the ticket automatically — pipeline decision, not agent decision.
-                # This prevents: agent says "link below" but never calls the tool.
-                # Also covers: agent gives up without offering any resolution path.
-                #
-                # Condition: search was attempted (agent ran) + no sources found
-                # + no ticket URL yet from agent tool call
-                agent_searched    = len(collected_sources) == 0  # searched but found nothing
-                no_ticket_yet     = ticket_url is None
-                if agent_searched and no_ticket_yet:
+                # ONLY fires when: agent actually ran (SEARCH intent) AND
+                # found nothing (collected_sources empty) AND
+                # agent did not call get_servicenow_link (ticket_url still null).
+                # Guards against: agent hallucinating ticket phrase without tool call.
+                # Does NOT fire for CASUAL/VAGUE/RESOLVED — those never set agent_ran.
+                no_sources    = len(collected_sources) == 0
+                no_ticket_yet = ticket_url is None
+                if agent_ran and no_sources and no_ticket_yet:
                     try:
                         from app.agents.tools.ticket_tool import get_servicenow_link
                         ticket_result = await get_servicenow_link.ainvoke({})

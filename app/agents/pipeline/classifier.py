@@ -1,37 +1,41 @@
 # app/agents/pipeline/classifier.py
-# Intent-based message classifier — runs before the agent on every message.
+# Message pre-classifier — simple gatekeeper, not a complex decision engine.
 #
-# Production-grade approach (2026):
-#   Single gpt-4o-mini call with conversation context.
-#   Returns a named intent — handler logic in chat.py decides what to do.
-#   Adding a new intent = add to the prompt + add handler in chat.py. Zero other changes.
+# Design philosophy (2026):
+#   The classifier only decides what it can decide with HIGH CONFIDENCE
+#   from the message alone. Ambiguous cases always go to SEARCH.
+#   The agent has full conversation history and is better equipped to
+#   reason about complex follow-ups than the classifier.
 #
-# Intents:
-#   SEARCH        — IT question, how-to, guidance → agent runs
-#   TICKET        — user wants to escalate, raise a ticket → ticket tool directly
-#   RESOLVED      — user confirms issue is fixed → acknowledge positively
-#   CASUAL        — greeting, thanks, praise, frustration → fast LLM response
-#   VAGUE         — not enough context (first message only) → ask clarifying question
+# Four simple binary decisions (in order):
+#   1. Is this explicitly requesting a ticket? → TICKET
+#   2. Is this confirming resolution? → RESOLVED
+#   3. Is this pure casual with zero IT content? → CASUAL
+#   4. Is this the very first message with no context at all? → VAGUE
+#   5. Everything else → SEARCH (agent handles with full context)
 #
-# Multi-turn awareness:
-#   Conversation history (last 3 turns) is passed to classifier.
-#   "Still not working" with prior context → TICKET (not VAGUE).
-#   Without history it would be classified incorrectly as VAGUE.
+# Key principle — SEARCH is the default for ALL ambiguous cases:
+#   "not enough info" → SEARCH (agent finds more)
+#   "check again" → SEARCH (agent retries)
+#   "still not working" → SEARCH (agent sees history, offers ticket naturally)
+#   "this is not helpful" → SEARCH (agent finds better answer)
+#   Any follow-up message → SEARCH (agent has conversation context)
+#
+# TICKET intent is ONLY for explicit ticket requests — not inferred frustration.
+# The agent + pipeline safety net handle implicit ticket scenarios.
 #
 # MCP-ready:
-#   TICKET intent today → get_servicenow_link() returns URL
-#   TICKET intent with MCP → create_servicenow_ticket() creates ticket directly
-#   Handler in chat.py swaps the tool call — classifier stays unchanged.
+#   TICKET today → get_servicenow_link() returns URL
+#   TICKET with MCP → create_servicenow_ticket() creates ticket directly
+#   Classifier unchanged — only chat.py TICKET handler updates.
 #
-# Fails open: classifier error → defaults to SEARCH (never blocks a real IT question)
+# Fails open: classifier error → SEARCH (never blocks a real IT question)
 
 import logging
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 # ── Intent constants ──────────────────────────────────────────────────────────
-# Use these in chat.py handler logic — not raw strings
 INTENT_SEARCH   = "SEARCH"
 INTENT_TICKET   = "TICKET"
 INTENT_RESOLVED = "RESOLVED"
@@ -42,52 +46,49 @@ VALID_INTENTS = {INTENT_SEARCH, INTENT_TICKET, INTENT_RESOLVED, INTENT_CASUAL, I
 
 # ── Classifier prompt ─────────────────────────────────────────────────────────
 _SYSTEM = (
-    "You classify messages in a PwC IT support chatbot. "
-    "You will be given the recent conversation history and the latest user message. "
-    "Classify the latest user message into exactly ONE of these intents:\n\n"
+    "You are a message classifier for a PwC IT support chatbot. "
+    "You will be given recent conversation history and the latest user message. "
+    "Make FOUR simple binary decisions in this exact order:\n\n"
 
-    "SEARCH   — User has an IT question, problem, how-to request, or guidance query "
-               "about a PwC application or system. This includes troubleshooting requests, "
-               "informational questions, and process guidance.\n"
-    "           ALSO classify as SEARCH if the message describes an IT problem AND "
-               "mentions wanting a ticket — investigate the problem first.\n"
-    "           Examples: 'I cannot login to SAP', 'how do I submit timesheet in Workday', "
-               "'what is Astro used for', 'steps to request VPN access', "
-               "'I am facing issue in Astro I want to create a ticket', "
-               "'SAP is broken can you raise a ticket'\n\n"
+    "DECISION 1 — Is the user EXPLICITLY requesting a support ticket?\n"
+    "   TICKET if the message clearly and explicitly uses words like:\n"
+    "   'raise a ticket', 'create a ticket', 'create an incident', 'raise an incident',\n"
+    "   'escalate this', 'open a support request', 'log a ticket'\n"
+    "   AND the message contains NO new IT problem to investigate.\n"
+    "   NOT TICKET if: user describes a problem AND mentions a ticket → classify as SEARCH.\n"
+    "   NOT TICKET if: user is frustrated or says 'not enough' or 'check again' → SEARCH.\n"
+    "   NOT TICKET if: user says 'still not working' without explicitly requesting a ticket → SEARCH.\n\n"
 
-    "TICKET   — User ONLY wants to escalate or raise a ticket, with NO new IT problem described. "
-               "This intent requires EITHER:\n"
-    "             (a) A follow-up message after troubleshooting was already attempted "
-               "(conversation history shows prior troubleshooting), OR\n"
-    "             (b) The message contains ONLY a ticket/escalation request with no new problem.\n"
-    "           IMPORTANT: If the message describes an IT problem AND mentions a ticket, "
-               "classify as SEARCH — the agent should investigate first.\n"
-    "           TICKET examples (follow-up only): 'still not working', 'issue persists', "
-               "'nothing worked', 'issue is still there', 'please raise a ticket now'\n"
-    "           NOT TICKET (classify as SEARCH instead): "
-               "'I am facing issue in Astro I want to create a ticket', "
-               "'SAP login broken can you raise a ticket', "
-               "'I have a problem with Workday please raise a support request'\n\n"
+    "DECISION 2 — Is the user CONFIRMING their issue is RESOLVED?\n"
+    "   RESOLVED if the message clearly confirms the issue is fixed or help no longer needed.\n"
+    "   Examples: 'it worked', 'problem solved', 'issue resolved', 'that fixed it',\n"
+    "             'working now', 'thank you it works'\n\n"
 
-    "RESOLVED — User confirms their issue is fixed or no longer needs help.\n"
-    "           Examples: 'it worked', 'problem solved', 'thanks it is working now', "
-               "'issue resolved', 'that fixed it'\n\n"
+    "DECISION 3 — Is this PURELY casual with ZERO IT content?\n"
+    "   CASUAL ONLY if the message is purely a greeting, thanks, or praise\n"
+    "   with absolutely no IT question, problem, or request embedded.\n"
+    "   Examples: 'hi', 'hello', 'good morning', 'thank you', 'great help'\n"
+    "   NOT CASUAL: 'thanks but still not working' → SEARCH\n"
+    "   NOT CASUAL: 'ok but can you check again' → SEARCH\n\n"
 
-    "CASUAL   — Greeting, thanks, praise, emotional response, or casual message "
-               "with no IT support request.\n"
-    "           Examples: 'hi', 'hello', 'thanks', 'thank you so much', "
-               "'you are amazing', 'great help', 'good morning'\n\n"
+    "DECISION 4 — Is this the VERY FIRST message with NO context at all?\n"
+    "   VAGUE ONLY if ALL of these are true:\n"
+    "     - There is NO conversation history shown\n"
+    "     - The message has no application name\n"
+    "     - The message has no error, symptom, or specific action\n"
+    "     - The message is completely unclear what help is needed\n"
+    "   Examples (first message only): 'I have an issue', 'help me', 'not working'\n"
+    "   NOT VAGUE if there is ANY conversation history → use SEARCH instead.\n\n"
 
-    "VAGUE    — Message is too vague to understand what the user needs and there is "
-               "NO prior conversation context to infer from. "
-               "IMPORTANT: Only classify as VAGUE if this is the first message AND "
-               "it has no application name, no error, no symptom, and no action. "
-               "If there is prior conversation history, classify as TICKET or SEARCH instead.\n"
-    "           Examples (first message only): 'I have an issue', 'something is wrong', "
-               "'I need help', 'not working'\n\n"
+    "DEFAULT — If none of the above apply: SEARCH\n"
+    "   SEARCH for ALL of these and more:\n"
+    "   - Any IT question, problem, how-to, or guidance request\n"
+    "   - User says 'not enough', 'check again', 'give me more', 'try again'\n"
+    "   - User is frustrated but hasn't explicitly requested a ticket\n"
+    "   - Any follow-up message when conversation history exists\n"
+    "   - Anything ambiguous — when in doubt, SEARCH\n\n"
 
-    "Answer with ONLY the intent word — no explanation, no punctuation."
+    "Answer with ONLY the intent word. No explanation. No punctuation."
 )
 
 _USER_TEMPLATE = (
@@ -98,17 +99,20 @@ _USER_TEMPLATE = (
 
 
 async def classify(
-    message:      str,
-    history:      list[dict] | None = None,
+    message: str,
+    history: list[dict] | None = None,
 ) -> str:
     """
-    Classifies a user message into one of five intents.
+    Classifies message into one of five intents using simple binary decisions.
+
+    The classifier is a lightweight gatekeeper — not a complex decision engine.
+    Ambiguous cases default to SEARCH so the agent can handle them with
+    full conversation context.
 
     Args:
         message: The latest user message.
-        history: Recent conversation turns for multi-turn context.
-                 Each dict: { "role": "user"|"assistant", "content": str }
-                 Pass last 3-4 turns for best accuracy.
+        history: Recent conversation turns { role, content }.
+                 Pass last 4 turns for multi-turn accuracy.
 
     Returns:
         One of: SEARCH | TICKET | RESOLVED | CASUAL | VAGUE
@@ -117,13 +121,13 @@ async def classify(
         from app.agents.clients.llm_client import llm_client
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        # Build conversation context string
+        # Build conversation context
         history_str = ""
         if history:
             history_str = "Recent conversation:\n"
-            for turn in history[-4:]:  # last 4 turns max — enough context, not too many tokens
+            for turn in history[-4:]:
                 role    = "User" if turn.get("role") == "user" else "Assistant"
-                content = str(turn.get("content", ""))[:200]  # truncate long messages
+                content = str(turn.get("content", ""))[:200]
                 history_str += f"{role}: {content}\n"
             history_str += "\n"
 
@@ -142,7 +146,7 @@ async def classify(
 
         if intent not in VALID_INTENTS:
             logger.warning(
-                "Classifier returned unknown intent '%s' for message '%s' — defaulting to SEARCH",
+                "Classifier returned unknown intent '%s' for '%s' — defaulting to SEARCH",
                 intent, message[:60],
             )
             return INTENT_SEARCH
@@ -159,4 +163,4 @@ async def classify(
         logger.warning(
             "Classifier failed: %s — defaulting to SEARCH (fail open)", str(e)
         )
-        return INTENT_SEARCH  # fail open — never block a real IT question
+        return INTENT_SEARCH

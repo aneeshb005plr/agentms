@@ -47,33 +47,25 @@ class MasterGraph:
         """
         Builds the agent graph with checkpointer.
         Called once in FastAPI lifespan startup.
-
-        Steps:
-        1. Create dedicated sync MongoClient for checkpointer
-        2. Create MongoDBSaver — indexes created automatically
-        3. Build conversational_support_agent — passes checkpointer into create_agent()
-           create_agent() returns already-compiled graph — no .compile() needed
         """
         logger.info("Building master graph...")
 
         # Step 1 — Dedicated sync MongoClient for checkpointer
-        # Separate from our AsyncMongoClient — MongoDBSaver needs sync client
         self._sync_client = MongoClient(
             settings.MONGODB_URI,
-            maxPoolSize=5,    # small pool — checkpointer only
+            maxPoolSize=5,
         )
 
-        # Step 2 — MongoDBSaver
-        # Indexes created automatically in __init__ — no setup() call needed
+        # Step 2 — MongoDBSaver — indexes auto-created in __init__
         checkpointer = MongoDBSaver(
             client=self._sync_client,
             db_name=settings.MONGODB_DB_NAME,
         )
         logger.info("MongoDBSaver checkpointer ready — indexes auto-created")
 
-        # Step 3 — Build agent
+        # Step 3 — Build agent and assign to self._graph
         # create_agent() returns an ALREADY COMPILED graph
-        # checkpointer passed directly into create_agent() — NOT via .compile()
+        # checkpointer passed directly — NOT via .compile()
         self._graph = await build_conversational_support_agent(
             prompt_service=prompt_service,
             checkpointer=checkpointer,

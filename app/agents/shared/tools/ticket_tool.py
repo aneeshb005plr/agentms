@@ -1,4 +1,4 @@
-# app/agents/tools/ticket_tool.py
+# app/agents/shared/tools/ticket_tool.py
 # ServiceNow ticket tool — returns ticket URL.
 #
 # MCP-ready: when ServiceNow MCP server is available, replace this tool
@@ -32,7 +32,7 @@ async def get_servicenow_link() -> str:
 
     Never call this tool multiple times in one response.
     """
-    url = getattr(settings, "SERVICENOW_URL", None) or "https://pwc.service-now.com/sp"
+    url = getattr(settings, "SERVICENOW_TICKET_URL", None) or "https://pwc.service-now.com/sp"
 
     logger.info("get_servicenow_link called — returning URL: %s", url)
 

@@ -1,8 +1,8 @@
-# app/agents/clients/health_client.py
+# app/agents/shared/clients/health_client.py
 # Health check client — Dataverse integration placeholder.
 #
 # Phase 1: always returns None — no Dataverse connection yet.
-# Phase 2: fill in _fetch_from_dataverse() when XYZ team confirms:
+# Phase 2: fill in _fetch_from_dataverse() when PwC team confirms:
 #   - Dataverse API endpoint or direct connection string
 #   - Authentication method (service principal, managed identity etc.)
 #   - Table schema for health check data
@@ -48,7 +48,7 @@ class HealthClient:
         self._initialised = True
         logger.info(
             "HealthClient initialised — Phase 1 placeholder mode "
-            "(Dataverse integration pending XYZ team confirmation)"
+            "(Dataverse integration pending PwC team confirmation)"
         )
 
     async def get_app_health(self, app_name: str) -> dict | None:
@@ -95,14 +95,14 @@ class HealthClient:
         Returns None if no recent record found.
 
         TODO Phase 2:
-        - Confirm Dataverse endpoint / connection method with XYZ team
+        - Confirm Dataverse endpoint / connection method with PwC team
         - Confirm table name and schema
         - Confirm app_name to Dataverse record mapping
         - Add authentication (service principal or managed identity)
         """
         raise NotImplementedError(
             "Dataverse integration not implemented yet. "
-            "Confirm connection details with XYZ team."
+            "Confirm connection details with PwC team."
         )
 
 

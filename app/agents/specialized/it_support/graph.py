@@ -1,4 +1,4 @@
-# app/agents/graph/subgraphs/conversational_support_agent.py
+# app/agents/specialized/it_support/graph.py
 # Conversational Support Agent — Phase 1.
 #
 # Uses LangChain 1.0 create_agent (NOT deprecated create_react_agent).
@@ -16,35 +16,24 @@
 # Middleware stack:
 #   1. MessageTrimmerMiddleware (before_model) — trim history + inject summary
 #   2. TokenTrackerMiddleware   (after_model)  — extract + accumulate token usage
-#
-# Token tracking:
-#   - TokenTrackerMiddleware appends one entry per LLM call to state
-#   - operator.add reducer accumulates all calls in current_message_llm_calls
-#   - SSE endpoint reads this after stream completes → saves to token_usage collection
-#
-# Memory:
-#   - Layer 1: MessageTrimmerMiddleware trims before every LLM call
-#   - Layer 2: conversation_summary injected as SystemMessage when available
-#   - Layer 3: retrieved_memory — always None in Phase 1
-#
-# app_identified:
-#   - Derived from search results after vector tool call
-#   - Extracted via post_agent processing in SSE endpoint
-#   - Informational only — Phase 2 Dataverse hook
 
 import logging
+from collections import Counter
 
 from langchain.agents import create_agent
-from langchain_core.messages import SystemMessage
 
-from app.agents.clients.llm_client import llm_client
+from app.agents.shared.clients.llm_client import llm_client
 from app.agents.middleware.message_trimmer import MessageTrimmerMiddleware
 from app.agents.middleware.token_tracker import TokenTrackerMiddleware
-from app.agents.tools import AGENT_TOOLS
-from app.domains.prompts.service import PromptService
+from app.agents.specialized.it_support.tools import AGENT_TOOLS
+from app.config import settings
 from app.domains.prompts.cache import PromptCache
+from app.domains.prompts.service import PromptService
 
 logger = logging.getLogger(__name__)
+
+# Agent name constant — used in token tracking
+AGENT_NAME = "conversational_support_agent"
 
 
 async def build_conversational_support_agent(
@@ -58,7 +47,7 @@ async def build_conversational_support_agent(
     Steps:
     1. Load system prompt from MongoDB via PromptService (falls back to defaults.py)
     2. Build middleware stack
-    3. Create agent via create_agent — checkpointer passed directly here
+    3. Create agent via create_agent with smart LLM + tools + middleware + checkpointer
        create_agent returns an ALREADY COMPILED graph — no .compile() needed
 
     Args:
@@ -75,28 +64,26 @@ async def build_conversational_support_agent(
     )
 
     logger.info(
-        "Building conversational_support_agent — "
-        "model=%s tools=%d",
-        llm_client.smart.model_name if hasattr(llm_client.smart, 'model_name') else 'configured',
+        "Building conversational_support_agent — model=%s tools=%d",
+        getattr(llm_client.smart, 'model_name', 'configured'),
         len(AGENT_TOOLS),
     )
 
     # Middleware stack
-    # Order matters:
-    #   before_model hooks run in list order (trimmer first)
-    #   after_model hooks run in REVERSE list order (tracker last added = first to run)
+    # before_model hooks run in list order
+    # after_model hooks run in REVERSE list order
     middleware = [
         MessageTrimmerMiddleware(),
         TokenTrackerMiddleware(),
     ]
 
-    # Build agent using LangChain 1.0 create_agent
+    # Build agent — create_agent returns ALREADY COMPILED graph
     agent = create_agent(
-        model=llm_client.smart,      # smart LLM — gpt-4o for reasoning
-        tools=AGENT_TOOLS,           # search, ticket, health check
-        system_prompt=system_prompt, # loaded from MongoDB
-        middleware=middleware,        # trimmer + token tracker
-        checkpointer=checkpointer,   # MongoDBSaver — persistent memory per thread_id
+        model=llm_client.smart,
+        tools=AGENT_TOOLS,
+        system_prompt=system_prompt,
+        middleware=middleware,
+        checkpointer=checkpointer,
     )
 
     logger.info("conversational_support_agent built successfully — compiled graph returned")
@@ -105,19 +92,16 @@ async def build_conversational_support_agent(
 
 def extract_app_identified(search_results: list[dict] | None) -> str | None:
     """
-    Derives app_identified from search results stored in state.
+    Derives app_identified from vector search results stored in state.
     Called by SSE endpoint after agent stream completes.
 
     Finds most frequent non-general application in top chunks.
     Returns None if mixed results or no clear winner.
 
-    This is informational only — used for Phase 2 health check hook.
+    Informational only — used for Phase 2 health check hook.
     """
     if not search_results:
         return None
-
-    from collections import Counter
-    from app.config import settings
 
     apps = [
         r.get("application")

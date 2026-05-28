@@ -1,4 +1,4 @@
-# app/agents/tools/search_tool.py
+# app/agents/specialized/it_support/tools/search_tool.py
 # Knowledge base search tool — wraps VectorClient.
 #
 # Passes full chunk text to agent — not truncated.
@@ -10,7 +10,7 @@ import logging
 
 from langchain_core.tools import tool
 
-from app.agents.clients.vector_client import VectorChunk, vector_client
+from app.agents.shared.clients.vector_client import VectorChunk, vector_client
 
 logger = logging.getLogger(__name__)
 

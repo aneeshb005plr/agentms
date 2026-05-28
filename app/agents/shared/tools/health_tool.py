@@ -1,4 +1,4 @@
-# app/agents/tools/health_tool.py
+# app/agents/shared/tools/health_tool.py
 # Application health check tool — wraps HealthClient (Dataverse placeholder).
 #
 # Phase 1: always returns no health data — HealthClient returns None.
@@ -18,7 +18,7 @@ import logging
 
 from langchain_core.tools import tool
 
-from app.agents.clients.health_client import health_client
+from app.agents.shared.clients.health_client import health_client
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 @tool
 async def check_app_health(app_name: str) -> str:
     """
-    Check the current health status of a XYZ application.
+    Check the current health status of a PwC application.
 
     Use this tool when:
     - The user is reporting an issue with a specific application
@@ -39,7 +39,7 @@ async def check_app_health(app_name: str) -> str:
     already aware and investigating — skip detailed troubleshooting in that case.
 
     Args:
-        app_name: Name of the XYZ application to check.
+        app_name: Name of the PwC application to check.
                   Use the exact application name as identified from the
                   knowledge base search results.
                   Examples: "SAP", "Workday", "ServiceNow", "Astro"

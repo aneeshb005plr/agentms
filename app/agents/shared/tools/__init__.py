@@ -3,9 +3,9 @@
 # Import this in conversational_support_agent.py:
 #   from app.agents.tools import AGENT_TOOLS
 
-from app.agents.tools.search_tool import search_knowledge_base
-from app.agents.tools.ticket_tool import get_servicenow_link
-from app.agents.tools.health_tool import check_app_health
+from app.agents.specialized.it_support.tools.search_tool import search_knowledge_base
+from app.agents.shared.tools.ticket_tool import get_servicenow_link
+from app.agents.shared.tools.health_tool import check_app_health
 
 # All tools available to conversational_support_agent
 AGENT_TOOLS = [

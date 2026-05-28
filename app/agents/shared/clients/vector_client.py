@@ -1,4 +1,4 @@
-# app/agents/clients/vector_client.py
+# app/agents/shared/clients/vector_client.py
 # HTTP client for PwC Vector API (knowledge base search).
 #
 # Endpoint:

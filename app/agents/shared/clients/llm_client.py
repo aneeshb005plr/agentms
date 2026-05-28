@@ -1,11 +1,11 @@
-# app/agents/clients/llm_client.py
+# app/agents/shared/clients/llm_client.py
 # LLM client — initialises smart and fast LLM instances.
 #
 # Two models:
 #   smart_llm  — gpt-4o     — complex reasoning: synthesiser, response formatter
 #   fast_llm   — gpt-4o-mini — quick tasks: intent classifier, query builder
 #
-# Both point to XYZ GenAI shared service (OpenAI-compatible API).
+# Both point to PwC GenAI shared service (OpenAI-compatible API).
 # Singleton — created once at startup, reused across all agent nodes.
 #
 # Token tracking:

@@ -1,4 +1,4 @@
-# app/agents/graph/state.py
+# app/agents/specialized/it_support/state.py
 # LangGraph state for NextGenAMS agent engine.
 #
 # Design decisions:
@@ -113,7 +113,7 @@ class NextGenAMSState(MessagesState):
 
     Session context — set once, never changes:
         session_id    UUID = conversation_id in MongoDB = LangGraph thread_id
-        user_id       XYZ uid from JWT (e.g. abahuleyan001)
+        user_id       PwC uid from JWT (e.g. abahuleyan001)
 
     Future hooks — not implemented in MVP:
         retrieved_memory    Layer 3 semantic cross-session memory
@@ -137,7 +137,7 @@ class NextGenAMSState(MessagesState):
 
     # ── Session context ───────────────────────────────────────────────────────
     session_id: str                    # UUID = conversation_id = LangGraph thread_id
-    user_id:    str                    # XYZ uid from JWT
+    user_id:    str                    # PwC uid from JWT
 
     # ── Future hooks ──────────────────────────────────────────────────────────
     retrieved_memory: list[str] | None # Layer 3 — always None in Phase 1

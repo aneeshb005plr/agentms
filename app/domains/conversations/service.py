@@ -261,7 +261,7 @@ class ConversationService:
         Falls back to first 60 chars if LLM fails.
         """
         try:
-            from app.agents.clients.llm_client import llm_client
+            from app.agents.shared.clients.llm_client import llm_client
             from app.domains.prompts.service import PromptService
             from app.domains.prompts.cache import PromptCache
             from langchain_core.messages import HumanMessage, SystemMessage
@@ -303,6 +303,10 @@ class ConversationService:
             if len(fallback) > 60:
                 fallback = fallback[:60] + "..."
             return fallback
+
+    async def get_message_count(self, conversation_id: str) -> int:
+        """Returns total non-deleted message count for a conversation."""
+        return await self._repo.get_message_count(conversation_id)
 
     async def should_generate_summary(self, conversation_id: str) -> bool:
         """

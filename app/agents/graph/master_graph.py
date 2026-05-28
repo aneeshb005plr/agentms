@@ -24,7 +24,7 @@ from pymongo import MongoClient
 from langgraph.checkpoint.mongodb import MongoDBSaver
 
 from app.config import settings
-from app.agents.graph.subgraphs.conversational_support_agent import (
+from app.agents.specialized.it_support.graph import (
     build_conversational_support_agent,
 )
 from app.domains.prompts.service import PromptService

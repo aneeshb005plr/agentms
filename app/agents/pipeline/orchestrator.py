@@ -108,20 +108,23 @@ class ChatPipeline:
         # ── Stage 1: Repair checkpoint ────────────────────────────────────────
         await repair_checkpoint(ctx.session_id)
 
-        # ── Stage 2: Save user message ────────────────────────────────────────
-        await self._conv.save_user_message(
-            conversation_id=ctx.session_id,
-            user_id=ctx.user_id,
-            content=ctx.user_message,
-        )
-
-        # ── Stage 3: Load conversation history ───────────────────────────────
+        # ── Stage 2: Load conversation history BEFORE saving user message ───────
+        # CRITICAL: must load BEFORE save_user_message() otherwise the current
+        # message is included in history and classifier sees it as "has history"
+        # causing greetings and casual messages to bypass VAGUE detection → SEARCH
         history_result = await self._conv.get_messages(conversation_id=ctx.session_id)
         ctx.history_turns = [
             {"role": m.role, "content": m.content}
             for m in (history_result.messages if history_result else [])[-4:]
             if m.role in ("user", "assistant") and m.content
         ]
+
+        # ── Stage 3: Save user message ────────────────────────────────────────
+        await self._conv.save_user_message(
+            conversation_id=ctx.session_id,
+            user_id=ctx.user_id,
+            content=ctx.user_message,
+        )
 
         # ── Stage 4: Classify intent ──────────────────────────────────────────
         ctx.intent = await classifier.classify(

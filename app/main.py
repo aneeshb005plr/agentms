@@ -15,9 +15,9 @@ from app.config import settings
 from app.db import db
 from app.domains.auth.service import auth_service
 from app.agents.graph.master_graph import master_graph
-from app.agents.clients.llm_client import llm_client
-from app.agents.clients.vector_client import vector_client
-from app.agents.clients.health_client import health_client
+from app.agents.shared.clients.llm_client import llm_client
+from app.agents.shared.clients.vector_client import vector_client
+from app.agents.shared.clients.health_client import health_client
 from app.domains.prompts.service import PromptService
 from app.domains.users.repository import UserRepository
 from app.domains.conversations.repository import ConversationRepository

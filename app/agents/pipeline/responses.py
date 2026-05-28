@@ -14,6 +14,9 @@
 
 import logging
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from app.agents.shared.clients.llm_client import llm_client
+
 logger = logging.getLogger(__name__)
 
 # ── System prompts ────────────────────────────────────────────────────────────
@@ -100,8 +103,6 @@ async def needs_escalation(
         return False  # no history = first message = cannot be escalation
 
     try:
-        from app.agents.clients.llm_client import llm_client
-        from langchain_core.messages import HumanMessage, SystemMessage
 
         # Build history context — last 6 turns for full picture
         history_str = "Conversation history:\n"
@@ -146,8 +147,6 @@ async def generate_escalation_response(
     Always ends with "I have provided a support ticket link below."
     """
     try:
-        from app.agents.clients.llm_client import llm_client
-        from langchain_core.messages import HumanMessage, SystemMessage
 
         history_str = "Conversation so far:\n"
         for turn in history[-6:]:
@@ -207,8 +206,6 @@ async def respond(
     system_prompt = system_map[intent]
 
     try:
-        from app.agents.clients.llm_client import llm_client
-        from langchain_core.messages import HumanMessage, SystemMessage
 
         context = ""
         if history:

@@ -33,6 +33,8 @@
 
 import logging
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from app.agents.shared.clients.llm_client import llm_client
 logger = logging.getLogger(__name__)
 
 # ── Intent constants ──────────────────────────────────────────────────────────
@@ -98,6 +100,16 @@ _USER_TEMPLATE = (
 )
 
 
+# Pure greeting strings — checked with Python before LLM call
+# Zero cost, zero latency, 100% reliable for obvious greetings
+_GREETINGS: frozenset[str] = frozenset({
+    "hi", "hello", "hey", "hiya", "howdy",
+    "good morning", "good afternoon", "good evening", "good day",
+    "hi there", "hello there", "hey there", "greetings",
+    "sup", "what's up", "whats up",
+})
+
+
 async def classify(
     message: str,
     history: list[dict] | None = None,
@@ -105,9 +117,8 @@ async def classify(
     """
     Classifies message into one of five intents using simple binary decisions.
 
-    The classifier is a lightweight gatekeeper — not a complex decision engine.
-    Ambiguous cases default to SEARCH so the agent can handle them with
-    full conversation context.
+    Pure greeting detection runs first in Python — zero LLM cost.
+    Everything else goes to gpt-4o-mini for classification.
 
     Args:
         message: The latest user message.
@@ -117,9 +128,16 @@ async def classify(
     Returns:
         One of: SEARCH | TICKET | RESOLVED | CASUAL | VAGUE
     """
+    cleaned = message.strip().lower().rstrip("!?.")
+
+    # ── Pure greeting — Python check, zero LLM cost ───────────────────────
+    # Only on first message (no history) to avoid false positives
+    # "hi" in middle of conversation could be casual acknowledgement → LLM decides
+    if not history and cleaned in _GREETINGS:
+        logger.info("Classifier: CASUAL (greeting, Python fast-path) — '%s'", message[:40])
+        return INTENT_CASUAL
+
     try:
-        from app.agents.clients.llm_client import llm_client
-        from langchain_core.messages import HumanMessage, SystemMessage
 
         # Build conversation context
         history_str = ""

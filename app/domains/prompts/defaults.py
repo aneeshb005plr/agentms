@@ -102,7 +102,11 @@ CONVERSATIONAL_SUPPORT_AGENT_SYSTEM_PROMPT = (
 QUERY_REWRITE_PROMPT = (
     "You are a search query optimizer for a PwC IT support knowledge base.\n"
     "Rewrite the user message below into a clear, specific search query.\n"
-    "The query should capture the core IT issue, application name, and symptom.\n"
+    "Rules:\n"
+    "  - Include the application name ONLY if it is explicitly mentioned in the message\n"
+    "  - NEVER invent or assume an application name that is not in the message\n"
+    "  - If no application is mentioned, focus on the symptom and action only\n"
+    "  - Keep the query concise and specific\n"
     "Return ONLY the rewritten query — no explanation, no prefix.\n\n"
     "User message: {message}\n\n"
     "Optimized search query:"

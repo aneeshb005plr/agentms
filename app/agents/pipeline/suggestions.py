@@ -22,6 +22,8 @@ import json
 import logging
 import re
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from app.agents.shared.clients.llm_client import llm_client
 logger = logging.getLogger(__name__)
 
 
@@ -45,8 +47,6 @@ async def generate(
 
     try:
         from app.domains.prompts.cache import prompt_cache, PromptCache
-        from app.agents.clients.llm_client import llm_client
-        from langchain_core.messages import HumanMessage
 
         # Load prompt from cache (MongoDB → defaults.py fallback)
         prompt_template = prompt_cache.get(

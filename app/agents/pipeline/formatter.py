@@ -22,6 +22,8 @@
 
 import logging
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from app.agents.shared.clients.llm_client import llm_client
 logger = logging.getLogger(__name__)
 
 _FORMATTER_SYSTEM = (
@@ -89,8 +91,6 @@ async def format_response(plain_text: str) -> str:
         return plain_text
 
     try:
-        from app.agents.clients.llm_client import llm_client
-        from langchain_core.messages import HumanMessage, SystemMessage
 
         response = await llm_client.fast.ainvoke([
             SystemMessage(content=_FORMATTER_SYSTEM),

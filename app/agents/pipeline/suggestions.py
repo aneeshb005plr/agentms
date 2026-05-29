@@ -84,7 +84,7 @@ async def generate(
         response = await llm_client.fast.ainvoke([HumanMessage(content=prompt)])
         raw      = response.content.strip()
 
-        match = re.search(r'[[].*?[]]', raw, re.DOTALL)
+        match = re.search(r'\[.*?\]', raw, re.DOTALL)
         if match:
             parsed = json.loads(match.group(0))
             if isinstance(parsed, list):

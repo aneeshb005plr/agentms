@@ -273,7 +273,13 @@ class ConversationService:
             )
 
             if not prompt_content:
-                raise ValueError("Title prompt not in cache")
+                # Fallback to defaults.py directly — cache miss should not block title gen
+                from app.domains.prompts import defaults as prompt_defaults
+                prompt_content = prompt_defaults.TITLE_GENERATION_PROMPT
+                logger.warning(
+                    "Title prompt not in cache — using defaults.py fallback. "
+                    "Run POST /api/v1/health/prompts/reload to fix."
+                )
 
             # Format prompt with user message
             formatted = prompt_content.replace("{message}", user_message[:500])

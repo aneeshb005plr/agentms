@@ -101,15 +101,17 @@ CONVERSATIONAL_SUPPORT_AGENT_SYSTEM_PROMPT = (
 
 QUERY_REWRITE_PROMPT = (
     "You are a search query optimizer for a PwC IT support knowledge base.\n"
-    "Rewrite the user message below into a clear, specific search query.\n"
-    "Rules:\n"
-    "  - Include the application name ONLY if it is explicitly mentioned in the message\n"
-    "  - NEVER invent or assume an application name that is not in the message\n"
-    "  - If no application is mentioned, focus on the symptom and action only\n"
-    "  - Keep the query concise and specific\n"
-    "Return ONLY the rewritten query — no explanation, no prefix.\n\n"
-    "User message: {message}\n\n"
-    "Optimized search query:"
+    "Rewrite the latest user message into a clear, specific search query.\n\n"
+    "STRICT RULES:\n"
+    "  - Use ONLY information explicitly stated in the conversation below\n"
+    "  - NEVER invent or assume an application name not mentioned by the user\n"
+    "  - If an app was mentioned in earlier turns, you may include it\n"
+    "  - If no app is mentioned anywhere in the conversation, do NOT add one\n"
+    "  - Focus on the symptom, action, and error — keep it concise\n\n"
+    "Conversation history (last 2 turns):\n"
+    "{history}\n"
+    "Latest message: {message}\n\n"
+    "Search query (no explanation, no prefix):"
 )
 
 TITLE_GENERATION_PROMPT = (

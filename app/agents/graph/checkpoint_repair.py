@@ -78,6 +78,15 @@ async def repair_checkpoint(session_id: str) -> None:
                 session_id, len(messages) - len(cleaned),
             )
 
+            # Verify repair took effect by re-reading state
+            # This forces LangGraph to reload from MongoDB, clearing any in-memory cache
+            verified_state = await master_graph.graph.aget_state(config)
+            verified_msgs  = verified_state.values.get("messages", []) if verified_state and verified_state.values else []
+            logger.info(
+                "Checkpoint repair verified for session %s — state now has %d messages",
+                session_id, len(verified_msgs),
+            )
+
     except Exception as e:
         logger.warning(
             "Checkpoint repair failed for session %s: %s — continuing anyway",

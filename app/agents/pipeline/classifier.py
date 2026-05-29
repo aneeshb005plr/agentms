@@ -109,6 +109,35 @@ _GREETINGS: frozenset[str] = frozenset({
     "sup", "what's up", "whats up",
 })
 
+# Application detection — checks if message names a specific PwC app
+_APP_DETECT_SYSTEM = (
+    "You determine if a message mentions a specific PwC application or system by name. "
+    "Answer ONLY with YES or NO.\n\n"
+    "Answer YES only if the message explicitly names a specific app or system.\n"
+    "Answer NO if only a generic action is mentioned with no app name.\n\n"
+    "Examples: I cannot login to Astro → YES, "
+    "I am unable to fill timesheet → NO, "
+    "SAP is giving error 403 → YES, "
+    "I cannot submit my expense → NO"
+)
+
+
+async def _has_app_name(message: str) -> bool:
+    """
+    Detects if message explicitly names a PwC application.
+    Fails open — returns True on error so SEARCH handles it rather than blocking.
+    """
+    try:
+        response = await llm_client.fast.ainvoke([
+            SystemMessage(content=_APP_DETECT_SYSTEM),
+            HumanMessage(content=f"Message: {message}\n\nYES or NO:"),
+        ])
+        return response.content.strip().upper().startswith("YES")
+    except Exception as e:
+        logger.warning("App detection failed: %s — assuming app present", str(e))
+        return True
+
+
 
 async def classify(
     message: str,
@@ -130,11 +159,9 @@ async def classify(
     """
     cleaned = message.strip().lower().rstrip("!?.")
 
-    # ── Pure greeting — Python check, zero LLM cost ───────────────────────
-    # Only on first message (no history) to avoid false positives
-    # "hi" in middle of conversation could be casual acknowledgement → LLM decides
+    # ── Pure greeting — Python fast-path, zero LLM cost ─────────────────────
     if not history and cleaned in _GREETINGS:
-        logger.info("Classifier: CASUAL (greeting, Python fast-path) — '%s'", message[:40])
+        logger.info("Classifier: CASUAL (greeting fast-path) — '%s'", message[:40])
         return INTENT_CASUAL
 
     try:
@@ -168,6 +195,18 @@ async def classify(
                 intent, message[:60],
             )
             return INTENT_SEARCH
+
+        # ── App detection for SEARCH with no history ─────────────────────────
+        # "I am unable to fill timesheet" → SEARCH (has symptom) BUT no app named
+        # Without an app name on first message → ask for clarification (VAGUE)
+        # With history → agent has context, proceed with SEARCH
+        if intent == INTENT_SEARCH and not history:
+            app_present = await _has_app_name(message)
+            if not app_present:
+                logger.info(
+                    "Classifier: VAGUE (no app name, no history) — '%s'", message[:60]
+                )
+                return INTENT_VAGUE
 
         logger.info(
             "Classifier: %s — '%s'%s",

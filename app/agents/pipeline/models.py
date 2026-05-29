@@ -59,6 +59,7 @@ class PipelineContext:
     message_id:       str | None = None
     suggestion_list:  list[str]  = field(default_factory=list)
     is_first_message: bool       = False
+    title:            str | None = None  # generated title for first message
 
     # ── Convenience properties ────────────────────────────────────────────────
     @property
@@ -110,6 +111,7 @@ def fmt_done(ctx: PipelineContext) -> str:
         "ticket_url":  ctx.ticket_url,
         "sources":     ctx.collected_sources,
         "suggestions": ctx.suggestion_list,
+        "title":       ctx.title,  # None if not first message or generation failed
     })
 
 def fmt_error(message: str) -> str:

@@ -285,14 +285,18 @@ class ChatPipeline:
                 for i in range(0, len(ctx.final_content), chunk_size):
                     yield fmt_token(ctx.final_content[i:i + chunk_size])
 
-            # ── Save + suggestions + done ─────────────────────────────────────
+            # ── Save + suggestions + title + done ────────────────────────────
             if ctx.has_content:
                 await self._persist(ctx)
-                yield fmt_done(ctx)
-                await self._conv.generate_title_if_needed(
+
+                # Generate title BEFORE done event so frontend gets it immediately
+                # Title included in done payload — no setTimeout reload needed
+                ctx.title = await self._conv.generate_title_if_needed(
                     conversation_id=ctx.session_id,
                     first_user_message=ctx.user_message,
                 )
+
+                yield fmt_done(ctx)
 
         finally:
             heartbeat_task.cancel()

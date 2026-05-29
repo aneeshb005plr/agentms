@@ -53,8 +53,12 @@ _SYSTEM = (
     "             NOT TICKET if frustrated or says not enough or check again → SEARCH\n\n"
     "  RESOLVED — user confirms issue is fixed\n"
     "             (it worked, problem solved, that fixed it, working now)\n\n"
-    "  CASUAL   — purely a greeting, thanks, or praise with zero IT content\n"
-    "             (hi, hello, thank you, great help)\n"
+    "  CASUAL   — greeting, thanks, praise, OR any message completely unrelated\n"
+    "             to PwC IT support, applications, or systems\n"
+    "             Examples: 'hi', 'hello', 'thank you', 'great help',\n"
+    "             'who is the PM of USA', 'what is the weather', 'write me a poem',\n"
+    "             'what is 2+2', 'who are you', 'what can you do'\n"
+    "             NOT CASUAL: any question mentioning a PwC app → SEARCH\n"
     "             NOT CASUAL: thanks but still not working → SEARCH\n\n"
     "  VAGUE    — ONLY if ALL true: no history, no app name, no error, no symptom\n"
     "             (I have an issue, help me, not working — first message only)\n"
@@ -66,16 +70,31 @@ _SYSTEM = (
     "conversation (current message OR history turns)\n"
     "  NO  — no specific app named anywhere; only generic actions mentioned\n\n"
 
-    "Examples:\n"
-    "  'I cannot login to Astro' → SEARCH\\nYES\n"
-    "  'hi' (no history) → CASUAL\\nNO\n"
-    "  'hi' then 'I have time sync issue' → SEARCH\\nNO\n"
-    "  'Astro steps...' then 'still not working' → SEARCH\\nYES\n"
-    "  'raise a ticket' (after troubleshooting) → TICKET\\nYES\n"
-    "  'I am unable to fill timesheet' (no history) → SEARCH\\nNO\n"
-    "  'it worked!' → RESOLVED\\nNO\n\n"
+    "Line 3 — PERSONAL_PROBLEM (one word YES or NO):\n"
+    "  YES — user is describing a personal IT issue they are currently experiencing\n"
+    "        (I cannot login, I am unable to, I have an error, my app is crashing,\n"
+    "         I need help with my specific issue, it is not working for me)\n"
+    "  NO  — user is asking a general question or seeking information\n"
+    "        (How many apps do you support, what can you help with,\n"
+    "         what is the process for, who do I contact, how does X work,\n"
+    "         follow-up questions, capability questions, general IT guidance)\n\n"
 
-    "Return ONLY two lines: intent word, then YES or NO. No explanation."
+    "Examples:\n"
+    "  'I cannot login to Astro' → SEARCH\\nYES\\nYES\n"
+    "  'hi' (no history) → CASUAL\\nNO\\nNO\n"
+    "  'hi' then 'I have time sync issue' → SEARCH\\nNO\\nYES\n"
+    "  'Astro steps...' then 'still not working' → SEARCH\\nYES\\nYES\n"
+    "  'raise a ticket' (after troubleshooting) → TICKET\\nYES\\nNO\n"
+    "  'I am unable to fill timesheet' (no history) → SEARCH\\nNO\\nYES\n"
+    "  'it worked!' → RESOLVED\\nNO\\nNO\n"
+    "  'How many apps do you support?' → SEARCH\\nNO\\nNO\n"
+    "  'What can you help me with?' → SEARCH\\nNO\\nNO\n"
+    "  'What is the process for requesting software?' → SEARCH\\nNO\\nNO\n"
+    "  'I need the number' (follow-up after general question) → SEARCH\\nNO\\nNO\n"
+    "  'so you are not aware about it?' (follow-up frustration) → SEARCH\\nNO\\nNO\n\n"
+
+    "Return ONLY three lines: intent word, YES/NO for app, YES/NO for personal problem. "
+    "No explanation."
 )
 
 _USER_TEMPLATE = (
@@ -127,9 +146,10 @@ async def classify(
             )),
         ])
 
-        lines  = [l.strip().upper() for l in response.content.strip().split("\n") if l.strip()]
-        intent = lines[0] if lines else INTENT_SEARCH
-        app_yn = lines[1] if len(lines) > 1 else "YES"  # fail open on missing line
+        lines       = [l.strip().upper() for l in response.content.strip().split("\n") if l.strip()]
+        intent      = lines[0] if lines else INTENT_SEARCH
+        app_yn      = lines[1] if len(lines) > 1 else "YES"  # fail open
+        personal_yn = lines[2] if len(lines) > 2 else "YES"  # fail open
 
         if intent not in VALID_INTENTS:
             logger.warning(
@@ -138,20 +158,27 @@ async def classify(
             )
             intent = INTENT_SEARCH
 
-        # ── 3. App context gate for SEARCH ────────────────────────────────────
-        # If SEARCH but no app established anywhere in conversation → VAGUE
-        # Prevents agent hallucinating app names for vague queries
-        if intent == INTENT_SEARCH and app_yn == "NO":
+        # ── 3. App context + personal problem gate ────────────────────────────
+        # VAGUE only when BOTH conditions are true:
+        #   - No PwC app anywhere in conversation (app=NO)
+        #   - User describing a personal IT problem (personal=YES)
+        #
+        # "I cannot fill timesheet" → personal=YES, app=NO → VAGUE (ask which app) ✅
+        # "How many apps do you support?" → personal=NO, app=NO → SEARCH (general) ✅
+        # "I need the number" follow-up → personal=NO, app=NO → SEARCH ✅
+        # "I cannot login to Astro" → app=YES → SEARCH (app gate wins) ✅
+        if intent == INTENT_SEARCH and app_yn == "NO" and personal_yn == "YES":
             logger.info(
-                "Classifier: VAGUE (no app context in message or history) — '%s'",
+                "Classifier: VAGUE (personal problem, no app context) — '%s'",
                 message[:60],
             )
             return INTENT_VAGUE
 
         logger.info(
-            "Classifier: %s (app:%s) — '%s'%s",
+            "Classifier: %s (app:%s personal:%s) — '%s'%s",
             intent,
             app_yn,
+            personal_yn,
             message[:60],
             f" (with {len(history)} history turns)" if history else "",
         )

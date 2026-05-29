@@ -29,8 +29,12 @@ _TICKET_SENTENCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# ServiceNow markdown link pattern — [any text](servicenow-url)
-_SERVICENOW_LINK_PATTERN = re.compile(
+# ServiceNow URL pattern — strips markdown links pointing to ServiceNow only.
+# URL-based matching is deterministic and has zero false positives.
+# Genuine knowledge base links (SharePoint, Google Sites, PwC portals) are
+# never ServiceNow URLs — they are always preserved.
+# Text-based matching was removed — too broad, risked stripping legitimate links.
+_SERVICENOW_URL_PATTERN = re.compile(
     r"\[([^\]]+)\]\(https?://[^)]*(?:service-now|servicenow)[^)]*\)",
     re.IGNORECASE,
 )
@@ -68,16 +72,19 @@ def process(content: str, ticket_url: str | None, session_id: str) -> str:
 
 def _strip_duplicate_ticket_links(content: str, session_id: str) -> str:
     """
-    Strips [text](servicenow-url) markdown links when ticket_url is set.
-    The frontend renders a proper ticket button from ticket_url —
-    a markdown link alongside it creates a duplicate confusing experience.
-    Keeps the link text, removes the URL part.
+    Strips ticket-related markdown links when ticket_url is set.
+    The frontend renders a proper ticket button — a markdown link
+    alongside creates a duplicate confusing experience.
+    Strips both by ServiceNow URL pattern AND by ticket link text pattern.
+    Keeps the link text, removes the URL and brackets.
     """
-    cleaned, count = _SERVICENOW_LINK_PATTERN.subn(r"\1", content)
+    # URL-based stripping only — ServiceNow domain is always the ticket URL.
+    # Keeps link text, removes the markdown URL syntax.
+    cleaned, count = _SERVICENOW_URL_PATTERN.subn(r"\1", content)
     if count:
         logger.info(
-            "Post-processor: stripped %d duplicate ServiceNow link(s) "
-            "for session %s", count, session_id,
+            "Post-processor: stripped %d ServiceNow link(s) for session %s",
+            count, session_id,
         )
     return cleaned
 

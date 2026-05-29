@@ -67,7 +67,10 @@ _FORMATTER_SYSTEM = (
     "  - NEVER add the sentence 'I have provided a support ticket link below' yourself\n"
     "  - Only preserve it if it already exists verbatim in the original text\n"
     "  - If the original text does not contain this sentence — do not add it under any circumstances\n"
-    "  - This sentence is controlled entirely by the system — not by you\n"
+    "  - This sentence is a PLAIN TEXT sentence — NEVER convert it into a hyperlink\n"
+    "  - NEVER add a URL after this sentence\n"
+    "  - NEVER wrap this sentence in markdown link syntax [text](url)\n"
+    "  - The ticket button is injected by the system separately — you never add it\n"
 )
 
 

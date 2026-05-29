@@ -231,22 +231,25 @@ class ConversationService:
         self,
         conversation_id: str,
         first_user_message: str,
-    ) -> None:
+    ) -> str | None:
         """
         Auto-generates conversation title using fast LLM (gpt-4o-mini).
         Called after saving first assistant message.
         Only updates if title is still "New Conversation".
         Falls back to first 60 chars if LLM call fails.
+
+        Returns generated title string, or None if no update was needed.
+        Title is included in the done SSE event so frontend updates immediately.
         """
         doc = await self._repo.get_conversation(conversation_id)
         if not doc:
-            return
+            return None
 
         # Only update if title is still default
         if doc.get("title", "") != "New Conversation":
-            return
+            return None
 
-        # Try LLM title generation first
+        # Generate title with LLM
         title = await self._generate_title_with_llm(first_user_message)
 
         await self._repo.update_conversation(
@@ -254,6 +257,7 @@ class ConversationService:
             ConversationUpdate(title=title),
         )
         logger.info("Auto-title generated for %s: %s", conversation_id, title)
+        return title
 
     async def _generate_title_with_llm(self, user_message: str) -> str:
         """

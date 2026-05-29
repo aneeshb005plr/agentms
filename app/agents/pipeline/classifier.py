@@ -65,10 +65,13 @@ _SYSTEM = (
     "             NOT VAGUE if ANY history exists → SEARCH\n\n"
     "  SEARCH   — default for everything else\n\n"
 
-    "Line 2 — APP (one word YES or NO):\n"
-    "  YES — a specific PwC application or system is named ANYWHERE in the "
-    "conversation (current message OR history turns)\n"
-    "  NO  — no specific app named anywhere; only generic actions mentioned\n\n"
+    "Line 2 — ENTITY (one word YES or NO):\n"
+    "  YES — the message or history contains a specific named entity that can be searched:\n"
+    "         any proper noun, named tool, system, service, application, or platform\n"
+    "         (e.g. Kayak, Astro, SAP, SharePoint, Concur, Teams, any named system)\n"
+    "         Generic IT terms alone do NOT count as named entities:\n"
+    "         'timesheet', 'sync', 'login', 'access', 'email' → these are NOT named entities\n"
+    "  NO  — message has only generic IT terms with no specific named entity\n\n"
 
     "Line 3 — PERSONAL_PROBLEM (one word YES or NO):\n"
     "  YES — user is describing a personal IT issue they are currently experiencing\n"
@@ -80,18 +83,18 @@ _SYSTEM = (
     "         follow-up questions, capability questions, general IT guidance)\n\n"
 
     "Examples:\n"
-    "  'I cannot login to Astro' → SEARCH\\nYES\\nYES\n"
+    "  'I cannot login to Astro' → SEARCH\\nYES\\nYES (Astro=named entity)\n"
+    "  'What types of travel can I book with Kayak?' → SEARCH\\nYES\\nNO (Kayak=named entity)\n"
+    "  'I have sync time issue' → SEARCH\\nNO\\nYES (sync/time=generic, no named entity)\n"
+    "  'I am unable to fill timesheet' → SEARCH\\nNO\\nYES (timesheet=generic)\n"
+    "  'I cannot login' → SEARCH\\nNO\\nYES (login=generic, no named entity)\n"
     "  'hi' (no history) → CASUAL\\nNO\\nNO\n"
-    "  'hi' then 'I have time sync issue' → SEARCH\\nNO\\nYES\n"
     "  'Astro steps...' then 'still not working' → SEARCH\\nYES\\nYES\n"
     "  'raise a ticket' (after troubleshooting) → TICKET\\nYES\\nNO\n"
-    "  'I am unable to fill timesheet' (no history) → SEARCH\\nNO\\nYES\n"
     "  'it worked!' → RESOLVED\\nNO\\nNO\n"
     "  'How many apps do you support?' → SEARCH\\nNO\\nNO\n"
-    "  'What can you help me with?' → SEARCH\\nNO\\nNO\n"
     "  'What is the process for requesting software?' → SEARCH\\nNO\\nNO\n"
-    "  'I need the number' (follow-up after general question) → SEARCH\\nNO\\nNO\n"
-    "  'so you are not aware about it?' (follow-up frustration) → SEARCH\\nNO\\nNO\n\n"
+    "  'I need the number' (follow-up) → SEARCH\\nNO\\nNO\n\n"
 
     "Return ONLY three lines: intent word, YES/NO for app, YES/NO for personal problem. "
     "No explanation."
@@ -148,7 +151,7 @@ async def classify(
 
         lines       = [l.strip().upper() for l in response.content.strip().split("\n") if l.strip()]
         intent      = lines[0] if lines else INTENT_SEARCH
-        app_yn      = lines[1] if len(lines) > 1 else "YES"  # fail open
+        entity_yn   = lines[1] if len(lines) > 1 else "YES"  # fail open
         personal_yn = lines[2] if len(lines) > 2 else "YES"  # fail open
 
         if intent not in VALID_INTENTS:
@@ -158,26 +161,29 @@ async def classify(
             )
             intent = INTENT_SEARCH
 
-        # ── 3. App context + personal problem gate ────────────────────────────
+        # ── 3. Entity + personal problem gate ─────────────────────────────────
         # VAGUE only when BOTH conditions are true:
-        #   - No PwC app anywhere in conversation (app=NO)
+        #   - No specific named entity anywhere (entity=NO)
+        #     Named entity = any proper noun: app name, system, tool, service
+        #     Generic terms alone (timesheet, sync, login) do NOT count
         #   - User describing a personal IT problem (personal=YES)
         #
-        # "I cannot fill timesheet" → personal=YES, app=NO → VAGUE (ask which app) ✅
-        # "How many apps do you support?" → personal=NO, app=NO → SEARCH (general) ✅
-        # "I need the number" follow-up → personal=NO, app=NO → SEARCH ✅
-        # "I cannot login to Astro" → app=YES → SEARCH (app gate wins) ✅
-        if intent == INTENT_SEARCH and app_yn == "NO" and personal_yn == "YES":
+        # "I have sync time issue" → entity=NO, personal=YES → VAGUE ✅
+        # "I cannot fill timesheet" → entity=NO, personal=YES → VAGUE ✅
+        # "What types of travel in Kayak?" → entity=YES (Kayak) → SEARCH ✅
+        # "I cannot login to Astro" → entity=YES (Astro) → SEARCH ✅
+        # "How many apps do you support?" → entity=NO, personal=NO → SEARCH ✅
+        if intent == INTENT_SEARCH and entity_yn == "NO" and personal_yn == "YES":
             logger.info(
-                "Classifier: VAGUE (personal problem, no app context) — '%s'",
+                "Classifier: VAGUE (personal problem, no named entity) — '%s'",
                 message[:60],
             )
             return INTENT_VAGUE
 
         logger.info(
-            "Classifier: %s (app:%s personal:%s) — '%s'%s",
+            "Classifier: %s (entity:%s personal:%s) — '%s'%s",
             intent,
-            app_yn,
+            entity_yn,
             personal_yn,
             message[:60],
             f" (with {len(history)} history turns)" if history else "",

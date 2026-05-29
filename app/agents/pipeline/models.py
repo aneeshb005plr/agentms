@@ -59,6 +59,7 @@ class PipelineContext:
     message_id:       str | None = None
     suggestion_list:  list[str]  = field(default_factory=list)
     is_first_message: bool       = False
+    title:            str | None = None  # auto-generated title (first message only)
     title:            str | None = None  # generated title for first message
 
     # ── Convenience properties ────────────────────────────────────────────────

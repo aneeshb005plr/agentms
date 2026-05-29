@@ -2,39 +2,28 @@
 # Message pre-classifier — simple gatekeeper, not a complex decision engine.
 #
 # Design philosophy (2026):
-#   The classifier only decides what it can decide with HIGH CONFIDENCE
-#   from the message alone. Ambiguous cases always go to SEARCH.
-#   The agent has full conversation history and is better equipped to
-#   reason about complex follow-ups than the classifier.
+#   Classifier only decides what it can with HIGH CONFIDENCE.
+#   Ambiguous cases default to SEARCH — agent has full context.
 #
-# Four simple binary decisions (in order):
-#   1. Is this explicitly requesting a ticket? → TICKET
-#   2. Is this confirming resolution? → RESOLVED
-#   3. Is this pure casual with zero IT content? → CASUAL
-#   4. Is this the very first message with no context at all? → VAGUE
-#   5. Everything else → SEARCH (agent handles with full context)
+# Flow:
+#   1. Python fast-path — pure greetings (zero LLM cost)
+#   2. LLM intent classification — 4 binary decisions
+#   3. App context check — if SEARCH, verify app is established
+#      anywhere in message OR history before sending to agent
 #
-# Key principle — SEARCH is the default for ALL ambiguous cases:
-#   "not enough info" → SEARCH (agent finds more)
-#   "check again" → SEARCH (agent retries)
-#   "still not working" → SEARCH (agent sees history, offers ticket naturally)
-#   "this is not helpful" → SEARCH (agent finds better answer)
-#   Any follow-up message → SEARCH (agent has conversation context)
+# App context rule (production-grade):
+#   Check BOTH current message AND history for any app name.
+#   "hi" + greeting response + "I have time sync issue" → no app anywhere → VAGUE
+#   "Astro steps" + "still not working" → Astro in history → SEARCH
+#   "I cannot login to Astro" → app in message → SEARCH
 #
-# TICKET intent is ONLY for explicit ticket requests — not inferred frustration.
-# The agent + pipeline safety net handle implicit ticket scenarios.
-#
-# MCP-ready:
-#   TICKET today → get_servicenow_link() returns URL
-#   TICKET with MCP → create_servicenow_ticket() creates ticket directly
-#   Classifier unchanged — only chat.py TICKET handler updates.
-#
-# Fails open: classifier error → SEARCH (never blocks a real IT question)
+# Fails open: any error → SEARCH (never blocks a real IT question)
 
 import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.agents.shared.clients.llm_client import llm_client
+
 logger = logging.getLogger(__name__)
 
 # ── Intent constants ──────────────────────────────────────────────────────────
@@ -46,51 +35,66 @@ INTENT_VAGUE    = "VAGUE"
 
 VALID_INTENTS = {INTENT_SEARCH, INTENT_TICKET, INTENT_RESOLVED, INTENT_CASUAL, INTENT_VAGUE}
 
-# ── Classifier prompt ─────────────────────────────────────────────────────────
-_SYSTEM = (
+# ── Pure greeting fast-path ───────────────────────────────────────────────────
+_GREETINGS: frozenset[str] = frozenset({
+    "hi", "hello", "hey", "hiya", "howdy",
+    "good morning", "good afternoon", "good evening", "good day",
+    "hi there", "hello there", "hey there", "greetings",
+    "sup", "what's up", "whats up",
+})
+
+# ── Intent classifier prompt ──────────────────────────────────────────────────
+_INTENT_SYSTEM = (
     "You are a message classifier for a PwC IT support chatbot. "
     "You will be given recent conversation history and the latest user message. "
     "Make FOUR simple binary decisions in this exact order:\n\n"
 
     "DECISION 1 — Is the user EXPLICITLY requesting a support ticket?\n"
-    "   TICKET if the message clearly and explicitly uses words like:\n"
-    "   'raise a ticket', 'create a ticket', 'create an incident', 'raise an incident',\n"
-    "   'escalate this', 'open a support request', 'log a ticket'\n"
+    "   TICKET if message clearly uses: 'raise a ticket', 'create a ticket', "
+    "   'create an incident', 'raise an incident', 'escalate this', "
+    "   'open a support request', 'log a ticket'\n"
     "   AND the message contains NO new IT problem to investigate.\n"
-    "   NOT TICKET if: user describes a problem AND mentions a ticket → classify as SEARCH.\n"
-    "   NOT TICKET if: user is frustrated or says 'not enough' or 'check again' → SEARCH.\n"
-    "   NOT TICKET if: user says 'still not working' without explicitly requesting a ticket → SEARCH.\n\n"
+    "   NOT TICKET: user describes problem AND mentions ticket → SEARCH\n"
+    "   NOT TICKET: frustrated or says 'not enough' or 'check again' → SEARCH\n"
+    "   NOT TICKET: 'still not working' without explicit ticket request → SEARCH\n\n"
 
     "DECISION 2 — Is the user CONFIRMING their issue is RESOLVED?\n"
-    "   RESOLVED if the message clearly confirms the issue is fixed or help no longer needed.\n"
-    "   Examples: 'it worked', 'problem solved', 'issue resolved', 'that fixed it',\n"
-    "             'working now', 'thank you it works'\n\n"
+    "   RESOLVED if message confirms issue is fixed or help no longer needed.\n"
+    "   Examples: 'it worked', 'problem solved', 'that fixed it', 'working now'\n\n"
 
     "DECISION 3 — Is this PURELY casual with ZERO IT content?\n"
-    "   CASUAL ONLY if the message is purely a greeting, thanks, or praise\n"
-    "   with absolutely no IT question, problem, or request embedded.\n"
-    "   Examples: 'hi', 'hello', 'good morning', 'thank you', 'great help'\n"
-    "   NOT CASUAL: 'thanks but still not working' → SEARCH\n"
-    "   NOT CASUAL: 'ok but can you check again' → SEARCH\n\n"
+    "   CASUAL ONLY if purely a greeting, thanks, or praise with no IT request.\n"
+    "   Examples: 'hi', 'hello', 'thank you', 'great help'\n"
+    "   NOT CASUAL: 'thanks but still not working' → SEARCH\n\n"
 
-    "DECISION 4 — Is this the VERY FIRST message with NO context at all?\n"
-    "   VAGUE ONLY if ALL of these are true:\n"
-    "     - There is NO conversation history shown\n"
-    "     - The message has no application name\n"
-    "     - The message has no error, symptom, or specific action\n"
-    "     - The message is completely unclear what help is needed\n"
+    "DECISION 4 — Is this the VERY FIRST message with NO context?\n"
+    "   VAGUE ONLY if ALL true: no history, no app name, no error, no symptom.\n"
     "   Examples (first message only): 'I have an issue', 'help me', 'not working'\n"
-    "   NOT VAGUE if there is ANY conversation history → use SEARCH instead.\n\n"
+    "   NOT VAGUE if ANY conversation history exists → SEARCH instead.\n\n"
 
-    "DEFAULT — If none of the above apply: SEARCH\n"
-    "   SEARCH for ALL of these and more:\n"
-    "   - Any IT question, problem, how-to, or guidance request\n"
-    "   - User says 'not enough', 'check again', 'give me more', 'try again'\n"
-    "   - User is frustrated but hasn't explicitly requested a ticket\n"
-    "   - Any follow-up message when conversation history exists\n"
-    "   - Anything ambiguous — when in doubt, SEARCH\n\n"
+    "DEFAULT: SEARCH — when in doubt, always SEARCH.\n\n"
 
     "Answer with ONLY the intent word. No explanation. No punctuation."
+)
+
+# ── App context detection prompt ──────────────────────────────────────────────
+_APP_CONTEXT_SYSTEM = (
+    "You determine if a PwC IT support conversation has established a specific "
+    "application or system context. Answer ONLY with YES or NO.\n\n"
+    "Answer YES if ANY message in the conversation explicitly names a specific "
+    "PwC application or system (e.g. Astro, SAP, Workday, Outlook, Teams, "
+    "ServiceNow, SharePoint, Concur, Ariba, Calculo, Kayak, USRPP, Nova, "
+    "Interim Time, or any other named tool or platform).\n\n"
+    "Answer NO if:\n"
+    "  - No application name appears anywhere in the conversation\n"
+    "  - Only generic actions are mentioned (fill timesheet, login, access, submit)\n"
+    "  - Only greetings or casual messages appear in history\n\n"
+    "Examples:\n"
+    "  User: hi | Agent: Hello! | User: I have time sync issue → NO\n"
+    "  User: I cannot login to Astro → YES\n"
+    "  User: Astro steps failed | Agent: try these | User: still not working → YES\n"
+    "  User: I am unable to fill timesheet → NO\n"
+    "  User: I need help | Agent: which app? | User: Astro → YES\n"
 )
 
 _USER_TEMPLATE = (
@@ -99,44 +103,49 @@ _USER_TEMPLATE = (
     "Intent:"
 )
 
-
-# Pure greeting strings — checked with Python before LLM call
-# Zero cost, zero latency, 100% reliable for obvious greetings
-_GREETINGS: frozenset[str] = frozenset({
-    "hi", "hello", "hey", "hiya", "howdy",
-    "good morning", "good afternoon", "good evening", "good day",
-    "hi there", "hello there", "hey there", "greetings",
-    "sup", "what's up", "whats up",
-})
-
-# Application detection — checks if message names a specific PwC app
-_APP_DETECT_SYSTEM = (
-    "You determine if a message mentions a specific PwC application or system by name. "
-    "Answer ONLY with YES or NO.\n\n"
-    "Answer YES only if the message explicitly names a specific app or system.\n"
-    "Answer NO if only a generic action is mentioned with no app name.\n\n"
-    "Examples: I cannot login to Astro → YES, "
-    "I am unable to fill timesheet → NO, "
-    "SAP is giving error 403 → YES, "
-    "I cannot submit my expense → NO"
+_APP_CONTEXT_USER_TEMPLATE = (
+    "Conversation:\n{context}\n\n"
+    "Does this conversation have a specific application established? YES or NO:"
 )
 
 
-async def _has_app_name(message: str) -> bool:
+async def _check_app_context(message: str, history: list[dict]) -> bool:
     """
-    Detects if message explicitly names a PwC application.
-    Fails open — returns True on error so SEARCH handles it rather than blocking.
+    Checks if a specific PwC application is established ANYWHERE in the
+    conversation — current message OR recent history turns.
+
+    This prevents hallucination: "I have time sync issue" after "hi/hello"
+    exchange has no app context → VAGUE → ask which application.
+
+    Fails open → True (assume app present, never block a real IT question).
     """
     try:
-        response = await llm_client.fast.ainvoke([
-            SystemMessage(content=_APP_DETECT_SYSTEM),
-            HumanMessage(content=f"Message: {message}\n\nYES or NO:"),
-        ])
-        return response.content.strip().upper().startswith("YES")
-    except Exception as e:
-        logger.warning("App detection failed: %s — assuming app present", str(e))
-        return True
+        # Build full conversation context including current message
+        lines: list[str] = []
+        for turn in (history or [])[-4:]:
+            role    = "User" if turn.get("role") == "user" else "Agent"
+            content = str(turn.get("content", ""))[:200]
+            lines.append(f"{role}: {content}")
+        lines.append(f"User: {message}")
+        context = "\n".join(lines)
 
+        response = await llm_client.fast.ainvoke([
+            SystemMessage(content=_APP_CONTEXT_SYSTEM),
+            HumanMessage(content=_APP_CONTEXT_USER_TEMPLATE.format(context=context)),
+        ])
+
+        result = response.content.strip().upper().startswith("YES")
+        logger.debug(
+            "App context check: %s — message='%s' history_turns=%d",
+            "YES" if result else "NO",
+            message[:50],
+            len(history) if history else 0,
+        )
+        return result
+
+    except Exception as e:
+        logger.warning("App context check failed: %s — assuming app present", str(e))
+        return True  # fail open
 
 
 async def classify(
@@ -144,29 +153,26 @@ async def classify(
     history: list[dict] | None = None,
 ) -> str:
     """
-    Classifies message into one of five intents using simple binary decisions.
-
-    Pure greeting detection runs first in Python — zero LLM cost.
-    Everything else goes to gpt-4o-mini for classification.
+    Classifies user message into one of five intents.
 
     Args:
         message: The latest user message.
         history: Recent conversation turns { role, content }.
-                 Pass last 4 turns for multi-turn accuracy.
 
     Returns:
         One of: SEARCH | TICKET | RESOLVED | CASUAL | VAGUE
     """
     cleaned = message.strip().lower().rstrip("!?.")
+    history = history or []
 
-    # ── Pure greeting — Python fast-path, zero LLM cost ─────────────────────
+    # ── 1. Pure greeting fast-path — zero LLM cost ───────────────────────────
+    # Only when no history — in-conversation "hi" goes to LLM for proper context
     if not history and cleaned in _GREETINGS:
         logger.info("Classifier: CASUAL (greeting fast-path) — '%s'", message[:40])
         return INTENT_CASUAL
 
     try:
-
-        # Build conversation context
+        # ── 2. Intent classification ──────────────────────────────────────────
         history_str = ""
         if history:
             history_str = "Recent conversation:\n"
@@ -176,14 +182,12 @@ async def classify(
                 history_str += f"{role}: {content}\n"
             history_str += "\n"
 
-        user_text = _USER_TEMPLATE.format(
-            history=history_str,
-            message=message,
-        )
-
         response = await llm_client.fast.ainvoke([
-            SystemMessage(content=_SYSTEM),
-            HumanMessage(content=user_text),
+            SystemMessage(content=_INTENT_SYSTEM),
+            HumanMessage(content=_USER_TEMPLATE.format(
+                history=history_str,
+                message=message,
+            )),
         ])
 
         raw    = response.content.strip().upper()
@@ -191,20 +195,22 @@ async def classify(
 
         if intent not in VALID_INTENTS:
             logger.warning(
-                "Classifier returned unknown intent '%s' for '%s' — defaulting to SEARCH",
-                intent, message[:60],
+                "Classifier returned unknown intent '%s' — defaulting to SEARCH",
+                intent,
             )
             return INTENT_SEARCH
 
-        # ── App detection for SEARCH with no history ─────────────────────────
-        # "I am unable to fill timesheet" → SEARCH (has symptom) BUT no app named
-        # Without an app name on first message → ask for clarification (VAGUE)
-        # With history → agent has context, proceed with SEARCH
-        if intent == INTENT_SEARCH and not history:
-            app_present = await _has_app_name(message)
-            if not app_present:
+        # ── 3. App context check for SEARCH intent ────────────────────────────
+        # If SEARCH but no app established anywhere → VAGUE
+        # Checks BOTH current message AND history turns together
+        # Prevents: "hi" + greeting + "I have time sync issue" → wrong SEARCH
+        # Allows:   "I have Astro issue" + "still broken" → SEARCH (Astro in history)
+        if intent == INTENT_SEARCH:
+            app_established = await _check_app_context(message, history)
+            if not app_established:
                 logger.info(
-                    "Classifier: VAGUE (no app name, no history) — '%s'", message[:60]
+                    "Classifier: VAGUE (no app context in message or history) — '%s'",
+                    message[:60],
                 )
                 return INTENT_VAGUE
 

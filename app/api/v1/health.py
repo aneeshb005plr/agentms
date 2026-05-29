@@ -60,6 +60,12 @@ async def reload_prompts(
     count = await prompt.force_update_default_prompts()
     prompt_cache.invalidate_all()
 
+    # Reload all prompts from MongoDB back into cache
+    # invalidate_all() clears cache but doesn't repopulate it
+    # Without this, every request after reload hits MongoDB until warm-up
+    all_prompts = await prompt.get_all_prompts()
+    prompt_cache.load_many(all_prompts)
+
     return {
         "status":  "reloaded",
         "updated": count,

@@ -252,6 +252,21 @@ class PromptService:
         if seeded:
             logger.info("Seeded %d default prompts into MongoDB", seeded)
 
+    async def get_all_prompts(self) -> list[dict]:
+        """
+        Returns all active prompts from MongoDB as list of dicts
+        suitable for prompt_cache.load_many().
+        """
+        cursor = self._collection.find({"is_active": True})
+        prompts = []
+        async for doc in cursor:
+            prompts.append({
+                "agent_id":   doc["agent_id"],
+                "prompt_key": doc["prompt_key"],
+                "content":    doc["content"],
+            })
+        return prompts
+
     async def force_update_default_prompts(self, updated_by: str = "system") -> int:
         """
         Force-updates ALL prompts from defaults.py into MongoDB.

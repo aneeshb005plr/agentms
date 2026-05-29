@@ -181,20 +181,23 @@ class ChatPipeline:
     async def _handle_ticket(self, ctx: PipelineContext) -> AsyncGenerator[str, None]:
         """
         User explicitly requested a ticket.
+        Generates contextual response based on conversation history.
         MCP-ready: replace _get_ticket_url() with MCP create_ticket() when available.
         """
-        ctx.ticket_url = await _get_ticket_url()
-
-        if ctx.ticket_url:
-            response_text = (
-                "I understand the issue is still not resolved. "
-                "I have provided a support ticket link below — "
-                "please include a description of the issue, "
-                "the steps you have already tried, and any error messages you saw."
+        # Get ticket URL and generate contextual response in parallel
+        ticket_url_task  = asyncio.create_task(_get_ticket_url())
+        response_task    = asyncio.create_task(
+            responses.generate_ticket_response(
+                message=ctx.user_message,
+                history=ctx.history_turns,
             )
-        else:
+        )
+        ctx.ticket_url, response_text = await asyncio.gather(
+            ticket_url_task, response_task
+        )
+
+        if not ctx.ticket_url:
             response_text = (
-                "I understand the issue is still not resolved. "
                 "Please contact your IT support team directly to raise a ticket."
             )
 

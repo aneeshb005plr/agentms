@@ -70,7 +70,10 @@ _ESCALATION_SYSTEM = (
     "     - The application name and their device type\n"
     "  4. Ends with EXACTLY this sentence: "
     "\"I have provided a support ticket link below.\"\n\n"
-    "Use markdown formatting — bold the ticket fields list. "
+    "Use markdown formatting for structure only: bold the ticket fields list, "
+    "use bullet points for the list items. "
+    "NEVER create hyperlinks or markdown links — no [text](url) syntax. "
+    "NEVER add a ticket URL — the system provides the button automatically. "
     "Be empathetic and professional. 3-5 sentences total before the ticket fields."
 )
 
@@ -88,6 +91,63 @@ _ESCALATION_DETECT_SYSTEM = (
     "  - The user wants more information but has not tried the steps yet\n"
     "  - The message is a greeting, thanks, or casual response"
 )
+
+
+# ── Ticket response prompts ──────────────────────────────────────────────────
+
+_TICKET_RESPONSE_SYSTEM = (
+    "You are NextGenAMS, a PwC IT support assistant. "
+    "The user needs a support ticket link. "
+    "Write a brief, contextual 1-3 sentence response based on WHY they need the ticket.\n\n"
+    "Look at the conversation history to determine the context:\n"
+    "  - If the user tried troubleshooting steps that did not work:\n"
+    "    Acknowledge the issue persists and recommend the ticket.\n"
+    "  - If no information was found in the knowledge base:\n"
+    "    Say the information is not currently available and the IT team can help.\n"
+    "  - If the user explicitly asked for a ticket with no prior troubleshooting:\n"
+    "    Simply say here is a ticket link to raise a request with the IT team.\n\n"
+    "Always end with EXACTLY: 'I have provided a support ticket link below.'\n"
+    "Never say you are escalating. Never mention health checks. "
+    "Never add hyperlinks or markdown link syntax. Keep it brief and professional."
+)
+
+
+async def generate_ticket_response(
+    message: str,
+    history: list[dict],
+) -> str:
+    """
+    Generates a contextual ticket response based on conversation history.
+    Covers three scenarios:
+      1. No KB answer found — IT team can help directly
+      2. Troubleshooting failed — steps tried, issue persists
+      3. Explicit ticket request — simple direct response
+
+    Falls back to generic message if LLM call fails.
+    """
+    try:
+        context = ""
+        if history:
+            context = "Conversation so far:\n"
+            for turn in history[-4:]:
+                role    = "User" if turn.get("role") == "user" else "Assistant"
+                content_text = str(turn.get("content", ""))[:200]
+                context += f"{role}: {content_text}\n"
+
+        response = await llm_client.fast.ainvoke([
+            SystemMessage(content=_TICKET_RESPONSE_SYSTEM),
+            HumanMessage(content=f"{context}\nLatest message: {message}"),
+        ])
+
+        return response.content.strip()
+
+    except Exception as e:
+        logger.warning("Ticket response generation failed: %s", str(e))
+        return (
+            "Here is a support ticket link to raise a request with the IT team "
+            "who can assist you directly.\n\n"
+            "I have provided a support ticket link below."
+        )
 
 
 async def needs_escalation(

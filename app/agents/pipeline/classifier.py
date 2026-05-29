@@ -94,7 +94,12 @@ _SYSTEM = (
     "  'it worked!' → RESOLVED\\nNO\\nNO\n"
     "  'How many apps do you support?' → SEARCH\\nNO\\nNO\n"
     "  'What is the process for requesting software?' → SEARCH\\nNO\\nNO\n"
-    "  'I need the number' (follow-up) → SEARCH\\nNO\\nNO\n\n"
+    "  'I need the number' (follow-up) → SEARCH\\nNO\\nNO\n"
+    "  History:'let me know if you want a ticket' | 'yes please' → TICKET\\nYES\\nNO\n"
+    "  History:'let me know if you want a ticket' | 'yes' → TICKET\\nYES\\nNO\n"
+    "  History:'did that fix it?' | 'yes' → RESOLVED\\nNO\\nNO\n"
+    "  History:'is the issue resolved?' | 'yes' → RESOLVED\\nNO\\nNO\n"
+    "  History:'any other questions?' | 'yes' → SEARCH\\nNO\\nNO\n\n"
 
     "Return ONLY three lines: intent word, YES/NO for app, YES/NO for personal problem. "
     "No explanation."

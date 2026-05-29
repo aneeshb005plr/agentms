@@ -235,6 +235,11 @@ class ChatPipeline:
         ctx.agent_ran = True
         event_queue: asyncio.Queue = asyncio.Queue()
 
+        # Inject conversation context into user message before passing to agent
+        # This ensures the agent uses full context when building search queries
+        # e.g. "in Astro" after "time sync issue" → agent knows to search "Astro time sync"
+        ctx = self._inject_context(ctx)
+
         agent_task     = asyncio.create_task(self._run_agent(ctx, event_queue))
         heartbeat_task = asyncio.create_task(self._heartbeat(event_queue))
 
@@ -317,6 +322,55 @@ class ChatPipeline:
         ctx.message_id = saved.message_id
         yield fmt_token(escalation_text)
         yield fmt_done(ctx)
+
+    # ── Context injection ────────────────────────────────────────────────────
+
+    def _inject_context(self, ctx: PipelineContext) -> PipelineContext:
+        """
+        Augments the user message with structured conversation context.
+
+        Problem: when user says "in Astro" after "time sync issue",
+        the agent only sees "in Astro" and forms a generic query.
+
+        Fix: prepend recent history context to user_message so agent
+        always has full context when building search queries.
+        Only injects when history has IT-relevant content — not greetings.
+        """
+        if not ctx.history_turns:
+            return ctx
+
+        # Build context from last 2 turns (most recent relevant context)
+        it_turns = [
+            t for t in ctx.history_turns[-4:]
+            if len(str(t.get("content", ""))) > 20  # skip very short messages like "hi"
+        ]
+
+        if not it_turns:
+            return ctx
+
+        context_lines = []
+        for turn in it_turns[-2:]:  # last 2 meaningful turns
+            role    = "User" if turn.get("role") == "user" else "Assistant"
+            content = str(turn.get("content", ""))[:300]
+            context_lines.append(f"{role}: {content}")
+
+        if not context_lines:
+            return ctx
+
+        context_prefix = (
+            "[Conversation context for search query building:\n"
+            + "\n".join(context_lines)
+            + "\n]\n\n"
+        )
+
+        # Create new context with augmented message
+        # PipelineContext.user_message is a property from request — create new request
+        from dataclasses import replace
+        new_request = replace(
+            ctx.request,
+            user_message=context_prefix + ctx.user_message,
+        )
+        return replace(ctx, request=new_request)
 
     # ── Agent runner ──────────────────────────────────────────────────────────
 

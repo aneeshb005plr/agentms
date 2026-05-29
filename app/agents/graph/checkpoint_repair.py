@@ -43,7 +43,7 @@ async def repair_checkpoint(session_id: str) -> None:
     """
     try:
         from app.agents.graph.master_graph import master_graph
-        from app.db                         import db
+        from app.db import db
         from langchain_core.messages        import AIMessage, ToolMessage
 
         config = {"configurable": {"thread_id": session_id}}
@@ -87,7 +87,6 @@ async def repair_checkpoint(session_id: str) -> None:
             )
 
         if not checkpoint_id:
-            # Fallback — try reading from checkpoint metadata
             checkpoint_id = getattr(state, "checkpoint_id", None)
 
         if not checkpoint_id:
@@ -99,9 +98,11 @@ async def repair_checkpoint(session_id: str) -> None:
             return
 
         # ── Delete broken checkpoint directly from MongoDB ────────────────────
-        # This bypasses the message reducer — guaranteed to remove dangling state
-        checkpoints_col      = db.client[db.db_name]["checkpoints"]
-        checkpoint_writes_col = db.client[db.db_name]["checkpoint_writes"]
+        # Uses db.mongo_db (correct attribute) and db.mongo_client for collections
+        # Bypasses LangGraph message reducer — guaranteed to remove dangling state
+        mongo_db              = db.mongo_db
+        checkpoints_col       = mongo_db["checkpoints"]
+        checkpoint_writes_col = mongo_db["checkpoint_writes"]
 
         # Delete checkpoint_writes for this broken checkpoint
         writes_result = await checkpoint_writes_col.delete_many({
